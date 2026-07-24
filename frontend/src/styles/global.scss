@@ -1,0 +1,21 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: linear-gradient(135deg, #f5f7fa 0%, #eef2f7 100%);
+  min-height: 100vh;
+}
+
+.el-button,
+[role='button'],
+.clickable {
+  cursor: pointer;
+}
+
+.el-button.is-disabled,
+[disabled] {
+  cursor: not-allowed;
+}

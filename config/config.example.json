@@ -1,0 +1,14 @@
+{
+  "liveRoomUrl": "https://live.douyin.com/123456789",
+  "intervalSeconds": 30,
+  "screenshotDir": "./screenshots",
+  "emojisPerSend": 3,
+  "emojiIndex": 1,
+  "screenshotEnabled": true,
+  "screenshotWaitSeconds": 3,
+  "excelReportEnabled": true,
+  "excelReportDir": "./reports",
+  "endTimeEnabled": false,
+  "endTime": "",
+  "waitLoginSeconds": 30
+}
