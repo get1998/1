@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Frame, Locator, Page, Playwright, sync_playwright
 
@@ -471,6 +473,7 @@ class TaskRuntime:
     sending: bool = False
     sent_count: int = 0
     last_screenshot: str = ""
+    last_video: str = ""
     last_error: str = ""
     excel_report_path: str = ""
     end_time_text: str = ""
@@ -491,6 +494,8 @@ class DouyinLiveAutomation:
         self._page: Page | None = None
         self._excel_logger: CommentExcelLogger | None = None
         self._stop_reason: str = "任务结束"
+        self._video_save_dir: Path | None = None
+        self._browser_lock = threading.Lock()
 
     def start(self, config: AppConfig, *, auto_send: bool = False) -> None:
         """
@@ -527,13 +532,19 @@ class DouyinLiveAutomation:
         self.runtime.sent_count = 0
         self.runtime.last_error = ""
         self.runtime.last_screenshot = ""
+        self.runtime.last_video = ""
         self.runtime.excel_report_path = ""
+        self._video_save_dir = None
         preview = config.comment_preview()
         self._append_log(f"单次评论内容：{preview}")
         if config.screenshotEnabled:
             self._append_log("发评后截图：已开启")
         else:
             self._append_log("发评后截图：已关闭")
+        if config.videoRecordEnabled:
+            self._append_log(f"页面录屏：已开启，保存目录 {config.resolve_video_dir()}")
+        else:
+            self._append_log("页面录屏：已关闭")
         if config.excelReportEnabled:
             self._append_log("Excel 评论统计：已开启")
         else:
@@ -580,21 +591,59 @@ class DouyinLiveAutomation:
         if len(self.runtime.logs) > 200:
             self.runtime.logs = self.runtime.logs[-200:]
 
+    def _finalize_recorded_video(self, page: Page | None, video_dir: Path | None) -> None:
+        """
+        浏览器关闭后整理录屏文件到可读文件名。
+
+        @param page: 已关闭的页面（仍可取 video.path）
+        @param video_dir: 录屏目标目录
+        """
+        if page is None or video_dir is None:
+            return
+        try:
+            video = page.video
+            if video is None:
+                return
+            raw_path = Path(video.path())
+            if not raw_path.exists():
+                self._append_log("录屏文件尚未生成或已被移除")
+                return
+            video_dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            target = video_dir / f"session_{stamp}.webm"
+            index = 1
+            while target.exists():
+                target = video_dir / f"session_{stamp}_{index}.webm"
+                index += 1
+            shutil.move(str(raw_path), str(target))
+            self.runtime.last_video = str(target)
+            self._append_log(f"录屏已保存: {target}")
+        except Exception as exc:
+            self._append_log(f"保存录屏失败: {exc}")
+
     def _cleanup_browser(self) -> None:
-        """释放浏览器资源。"""
-        if self._context is not None:
-            try:
-                self._context.close()
-            except Exception:
-                pass
-        if self._playwright is not None:
-            try:
-                self._playwright.stop()
-            except Exception:
-                pass
-        self._page = None
-        self._context = None
-        self._playwright = None
+        """释放浏览器资源，并在开启录屏时落盘视频。"""
+        with self._browser_lock:
+            page = self._page
+            context = self._context
+            playwright = self._playwright
+            video_dir = self._video_save_dir
+            self._page = None
+            self._context = None
+            self._playwright = None
+            self._video_save_dir = None
+
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            self._finalize_recorded_video(page, video_dir)
+            if playwright is not None:
+                try:
+                    playwright.stop()
+                except Exception:
+                    pass
 
     def _wait_interval_or_stop(self, interval_seconds: int, end_at: datetime | None) -> bool:
         """
@@ -781,15 +830,23 @@ class DouyinLiveAutomation:
         user_data_dir = PROJECT_ROOT / ".playwright-user-data"
         user_data_dir.mkdir(parents=True, exist_ok=True)
 
+        launch_kwargs: dict[str, object] = {
+            "user_data_dir": str(user_data_dir),
+            "headless": False,
+            "viewport": {"width": 1440, "height": 900},
+            "locale": "zh-CN",
+            "args": ["--disable-blink-features=AutomationControlled"],
+        }
+        if config.videoRecordEnabled:
+            video_dir = config.resolve_video_dir()
+            video_dir.mkdir(parents=True, exist_ok=True)
+            self._video_save_dir = video_dir
+            launch_kwargs["record_video_dir"] = str(video_dir)
+            launch_kwargs["record_video_size"] = {"width": 1440, "height": 900}
+
         self._playwright = sync_playwright().start()
         try:
-            self._context = self._playwright.chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
-                headless=False,
-                viewport={"width": 1440, "height": 900},
-                locale="zh-CN",
-                args=["--disable-blink-features=AutomationControlled"],
-            )
+            self._context = self._playwright.chromium.launch_persistent_context(**launch_kwargs)
         except Exception as exc:
             message = str(exc)
             if "Executable doesn't exist" in message:

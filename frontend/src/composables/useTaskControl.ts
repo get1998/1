@@ -14,6 +14,7 @@ export function useTaskControl(getConfig: () => AppConfig) {
     sending: false,
     sentCount: 0,
     lastScreenshot: '',
+    lastVideo: '',
     lastError: '',
     excelReportPath: '',
     endTimeText: '',

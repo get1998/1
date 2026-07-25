@@ -52,6 +52,10 @@ export interface AppConfig {
   screenshotEnabled: boolean
   /** 发评后等待评论出现再截图（秒） */
   screenshotWaitSeconds: number
+  /** 是否录制浏览器页面（证明评论出现在弹幕） */
+  videoRecordEnabled: boolean
+  /** 录屏存储目录 */
+  videoDir: string
   /** 是否写入 Excel 评论统计 */
   excelReportEnabled: boolean
   /** Excel 报表存储目录 */
@@ -78,6 +82,8 @@ export interface TaskStatus {
   sentCount: number
   /** 最近截图路径 */
   lastScreenshot: string
+  /** 最近录屏路径 */
+  lastVideo: string
   /** 最近错误信息 */
   lastError: string
   /** Excel 统计文件路径 */

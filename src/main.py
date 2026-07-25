@@ -45,6 +45,7 @@ class TaskStatusResponse(BaseModel):
     sending: bool
     sentCount: int
     lastScreenshot: str
+    lastVideo: str
     lastError: str
     excelReportPath: str
     endTimeText: str
@@ -142,6 +143,7 @@ def task_status() -> TaskStatusResponse:
         sending=runtime.sending,
         sentCount=runtime.sent_count,
         lastScreenshot=runtime.last_screenshot,
+        lastVideo=runtime.last_video,
         lastError=runtime.last_error,
         excelReportPath=runtime.excel_report_path,
         endTimeText=runtime.end_time_text,

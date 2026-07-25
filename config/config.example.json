@@ -13,6 +13,8 @@
   "emojiIndex": 1,
   "screenshotEnabled": true,
   "screenshotWaitSeconds": 3,
+  "videoRecordEnabled": true,
+  "videoDir": "./videos",
   "excelReportEnabled": true,
   "excelReportDir": "./reports",
   "endTimeEnabled": false,

@@ -55,3 +55,12 @@ export function buildScreenshotDir(key: string): string {
 export function buildExcelReportDir(key: string): string {
   return key ? `./reports/${key}` : './reports'
 }
+
+/**
+ * 按抖音号或直播间号生成录屏目录。
+ * @param key - 目录标识
+ * @returns 相对目录路径
+ */
+export function buildVideoDir(key: string): string {
+  return key ? `./videos/${key}` : './videos'
+}

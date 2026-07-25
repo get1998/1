@@ -186,6 +186,11 @@ class AppConfig(BaseModel):
         le=30,
         description="发评后等待评论出现在聊天区再截图（秒）",
     )
+    videoRecordEnabled: bool = Field(
+        default=True,
+        description="是否录制浏览器页面（用于证明评论出现在弹幕/聊天区）",
+    )
+    videoDir: str = Field(default="./videos", description="录屏存储目录")
     excelReportEnabled: bool = Field(default=True, description="是否写入 Excel 评论统计")
     excelReportDir: str = Field(default="./reports", description="Excel 报表存储目录")
     endTimeEnabled: bool = Field(default=False, description="是否启用结束时间自动停止")
@@ -251,6 +256,10 @@ class AppConfig(BaseModel):
             data["excelReportEnabled"] = True
         if "excelReportDir" not in data:
             data["excelReportDir"] = "./reports"
+        if "videoRecordEnabled" not in data:
+            data["videoRecordEnabled"] = True
+        if "videoDir" not in data:
+            data["videoDir"] = "./videos"
         if "endTimeEnabled" not in data:
             data["endTimeEnabled"] = False
         if "endTime" not in data:
@@ -286,6 +295,7 @@ class AppConfig(BaseModel):
         if storage_key:
             self.screenshotDir = f"./screenshots/{storage_key}"
             self.excelReportDir = f"./reports/{storage_key}"
+            self.videoDir = f"./videos/{storage_key}"
 
         self.commentParts = normalize_comment_parts(self.commentParts)
         texts = [part.text for part in self.commentParts if part.type == "text"]
@@ -393,6 +403,14 @@ class AppConfig(BaseModel):
         @returns: 截图目录 Path
         """
         return self.resolve_storage_subdir("screenshots", self.screenshotDir)
+
+    def resolve_video_dir(self) -> Path:
+        """
+        解析录屏目录绝对路径（优先使用房间号/抖音号子目录）。
+
+        @returns: 录屏目录 Path
+        """
+        return self.resolve_storage_subdir("videos", self.videoDir)
 
 
 def load_config(config_path: Path | None = None) -> AppConfig:

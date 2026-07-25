@@ -12,6 +12,7 @@ import {
   buildExcelReportDir,
   buildLiveRoomUrl,
   buildScreenshotDir,
+  buildVideoDir,
   extractLiveRoomId,
   normalizeAccountId,
 } from '@/utils/liveRoom'
@@ -31,6 +32,8 @@ const DEFAULT_CONFIG: AppConfig = {
   emojiIndex: 1,
   screenshotEnabled: true,
   screenshotWaitSeconds: 3,
+  videoRecordEnabled: true,
+  videoDir: './videos',
   excelReportEnabled: true,
   excelReportDir: './reports',
   endTimeEnabled: false,
@@ -62,6 +65,7 @@ function syncLiveRoomFields(form: AppConfig): void {
   const storageKey = form.webRid || form.douyinId || extractLiveRoomId(form.liveRoomUrl)
   form.screenshotDir = buildScreenshotDir(storageKey)
   form.excelReportDir = buildExcelReportDir(storageKey)
+  form.videoDir = buildVideoDir(storageKey)
 }
 
 /**
@@ -144,6 +148,8 @@ export function useAppConfig() {
         emojiIndex: data.emojiIndex ?? 1,
         screenshotEnabled: data.screenshotEnabled ?? true,
         screenshotWaitSeconds: data.screenshotWaitSeconds ?? 3,
+        videoRecordEnabled: data.videoRecordEnabled ?? true,
+        videoDir: data.videoDir ?? './videos',
         excelReportEnabled: data.excelReportEnabled ?? true,
         excelReportDir: data.excelReportDir ?? './reports',
         endTimeEnabled: data.endTimeEnabled ?? false,

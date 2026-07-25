@@ -101,6 +101,16 @@ const emit = defineEmits<{
         <span class="form-tip">秒（等待评论出现在聊天区后再截图）</span>
       </el-form-item>
 
+      <el-form-item label="页面录屏">
+        <el-switch v-model="form.videoRecordEnabled" />
+        <span class="form-tip">录制浏览器画面，停止任务后保存，用于核对弹幕中是否出现自己的评论</span>
+      </el-form-item>
+
+      <el-form-item v-if="form.videoRecordEnabled" label="录屏目录">
+        <el-input v-model="form.videoDir" readonly placeholder="./videos/标识" />
+        <div class="form-desc">按直播间号或抖音号自动生成；格式为 webm</div>
+      </el-form-item>
+
       <el-form-item label="Excel 统计">
         <el-switch v-model="form.excelReportEnabled" />
         <span class="form-tip">每次发评写入 Excel 记录</span>

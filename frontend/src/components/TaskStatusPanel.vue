@@ -64,6 +64,11 @@ function phaseText(status: TaskStatus): string {
       </div>
 
       <div class="status-item">
+        <div class="status-label">最近录屏</div>
+        <div class="status-value">{{ status.lastVideo || '暂无' }}</div>
+      </div>
+
+      <div class="status-item">
         <div class="status-label">最近错误</div>
         <div class="status-value" :class="{ 'is-error': !!status.lastError }">
           {{ status.lastError || '无' }}
