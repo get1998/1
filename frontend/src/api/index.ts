@@ -71,7 +71,7 @@ export async function startTaskApi(config: AppConfig): Promise<ApiMessage> {
 }
 
 /**
- * 开始发送评论（须在直播间就绪后调用）
+ * 开始发送评论（须在直播间就绪后调用，开启录屏时同步录制）
  * @returns 操作结果
  */
 export async function beginSendApi(): Promise<ApiMessage> {

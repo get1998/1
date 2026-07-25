@@ -13,6 +13,8 @@ export type CommentPart =
       type: 'emoji'
       /** 表情序号，从 1 开始 */
       index: number
+      /** 表情图片 URL，用于发送时精确点击 */
+      imageUrl?: string
     }
 
 /**
@@ -50,7 +52,7 @@ export interface AppConfig {
   emojiIndex: number
   /** 是否在发评后截图 */
   screenshotEnabled: boolean
-  /** 发评后等待评论出现再截图（秒） */
+  /** 发评后等待评论出现再截图（秒，支持 0.5 步进） */
   screenshotWaitSeconds: number
   /** 是否录制浏览器页面（证明评论出现在弹幕） */
   videoRecordEnabled: boolean
@@ -78,6 +80,8 @@ export interface TaskStatus {
   ready: boolean
   /** 是否已开始发送评论 */
   sending: boolean
+  /** 是否正在录屏 */
+  recording: boolean
   /** 已发送次数 */
   sentCount: number
   /** 最近截图路径 */

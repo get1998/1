@@ -43,6 +43,7 @@ class TaskStatusResponse(BaseModel):
     running: bool
     ready: bool
     sending: bool
+    recording: bool
     sentCount: int
     lastScreenshot: str
     lastVideo: str
@@ -114,7 +115,7 @@ def start_task(config: AppConfig) -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"message": "任务已启动，进入直播间后请点击「开始发送」"}
+    return {"message": "任务已启动，进入直播间后点击「开始发送」即可（开启录屏时将自动录制）"}
 
 
 @app.post("/api/task/begin-send")
@@ -124,7 +125,7 @@ def begin_send() -> dict[str, str]:
         automation.begin_send()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"message": "已开始发送"}
+    return {"message": "已开始发送（若已开启录屏将同步录制）"}
 
 
 @app.post("/api/task/stop")
@@ -141,6 +142,7 @@ def task_status() -> TaskStatusResponse:
         running=runtime.running,
         ready=runtime.ready,
         sending=runtime.sending,
+        recording=runtime.recording,
         sentCount=runtime.sent_count,
         lastScreenshot=runtime.last_screenshot,
         lastVideo=runtime.last_video,

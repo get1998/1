@@ -24,7 +24,11 @@ export function normalizeCommentParts(parts: CommentPart[]): CommentPart[] {
       continue
     }
     if (part.type === 'emoji' && part.index >= 1) {
-      result.push({ type: 'emoji', index: part.index })
+      result.push({
+        type: 'emoji',
+        index: part.index,
+        imageUrl: part.imageUrl?.trim() || '',
+      })
     }
   }
   return result
@@ -98,6 +102,29 @@ export function parseInputTextToParts(input: string): CommentPart[] {
 export function formatCommentPartsPreview(parts: CommentPart[]): string {
   const text = partsToInputText(parts)
   return text || ''
+}
+
+/**
+ * 用本地表情目录补全片段中的 imageUrl。
+ * @param parts - 评论片段
+ * @param catalog - 表情目录
+ * @returns 补全后的片段
+ */
+export function enrichCommentPartsWithCatalog(
+  parts: CommentPart[],
+  catalog: Array<{ index: number; imageUrl: string }>,
+): CommentPart[] {
+  const byIndex = new Map(catalog.map((item) => [item.index, item.imageUrl]))
+  return normalizeCommentParts(parts).map((part) => {
+    if (part.type !== 'emoji') {
+      return part
+    }
+    return {
+      type: 'emoji',
+      index: part.index,
+      imageUrl: part.imageUrl?.trim() || byIndex.get(part.index) || '',
+    }
+  })
 }
 
 /**

@@ -9,13 +9,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from playwright.sync_api import BrowserContext, Frame, Locator, Page, Playwright, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Frame, Locator, Page, Playwright, sync_playwright
 
+from src.automation.emoji_panel import (
+    EMOJI_CLICK_BY_INDEX_SCRIPT,
+    EMOJI_CLICK_BY_OBJECT_KEY_SCRIPT,
+    EMOJI_PANEL_COUNT_SCRIPT,
+    emoji_object_key_from_url,
+)
 from src.automation.live_room_entry import enter_live_room
-from src.config_loader import AppConfig, CommentPart, PROJECT_ROOT, extract_live_room_id
+from src.config_loader import AppConfig, CommentPart, PROJECT_ROOT, extract_live_room_id, load_config
 from src.report.excel_logger import CommentExcelLogger
-from src.screenshot.capture import capture_after_comment, get_chat_message_count
-
 # 评论输入框候选选择器
 COMMENT_INPUT_SELECTORS: list[str] = [
     '#chatInput textarea',
@@ -87,263 +91,8 @@ SEND_BUTTON_SELECTORS: list[str] = [
 # 备用：按序号发送的 Unicode 表情（点击失败时使用）
 FALLBACK_UNICODE_EMOJIS: list[str] = ["😀", "😁", "😂", "🤣", "😊", "😍", "👍", "🎉", "🔥", "❤️"]
 
-# 收集抖音表情面板内可点击项（按视觉位置从上到下、从左到右排序）
-EMOJI_PANEL_COLLECT_SCRIPT = """
-() => {
-  const isInChatList = (el) => !!el.closest(
-    '[class*="webcast-chatroom___list"], [class*="___items"], [class*="message"], [class*="item-wrapper"]'
-  );
-  const isEmojiIcon = (el) => !!el.closest('[class*="webcast-chatroom___emoji-icon"]');
-
-  const panel = document.querySelector('[class*="webcast-chatroom___emoji-panel"]')
-    || document.querySelector('[class*="webcast-chatroom___emoji-list"]')
-    || document.querySelector('[class*="emoji-panel-wrapper"]:not(.invisible)')
-    || document.querySelector('[class*="emoji-panel-wrapper"]')
-    || document.querySelector('[class*="emoji-panel-list"]')
-    || document.querySelector('[class*="webcast-chatroom"] [class*="emoji-panel"]');
-
-  const result = [];
-  const seen = new Set();
-
-  const push = (el) => {
-    if (!(el instanceof HTMLElement) || seen.has(el) || isInChatList(el) || isEmojiIcon(el)) return;
-    if (el.offsetParent === null) return;
-    const r = el.getBoundingClientRect();
-    if (r.width < 8 || r.height < 8 || r.width > 120 || r.height > 120) return;
-    seen.add(el);
-    result.push({ el, top: Math.round(r.top), left: Math.round(r.left) });
-  };
-
-  if (!panel) return [];
-
-  const officialItems = panel.querySelectorAll(
-    '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"]'
-  );
-  if (officialItems.length > 0) {
-    for (const el of officialItems) push(el);
-  }
-
-  if (result.length === 0) {
-    for (const img of panel.querySelectorAll('img')) {
-      push(img.closest('[class*="item"]') || img.parentElement || img);
-    }
-  }
-
-  result.sort((a, b) => (a.top === b.top ? a.left - b.left : a.top - b.top));
-  return result.map((item) => ({
-    top: item.top,
-    left: item.left,
-    cls: (item.el.className || '').toString().slice(0, 80),
-  }));
-}
-"""
-
-EMOJI_PANEL_COUNT_SCRIPT = """
-() => {
-  const isInChatList = (el) => !!el.closest(
-    '[class*="webcast-chatroom___list"], [class*="___items"], [class*="message"], [class*="item-wrapper"]'
-  );
-  const isEmojiIcon = (el) => !!el.closest('[class*="webcast-chatroom___emoji-icon"]');
-  const panel = document.querySelector('[class*="webcast-chatroom___emoji-panel"]')
-    || document.querySelector('[class*="webcast-chatroom___emoji-list"]')
-    || document.querySelector('[class*="emoji-panel-wrapper"]:not(.invisible)')
-    || document.querySelector('[class*="emoji-panel-wrapper"]')
-    || document.querySelector('[class*="emoji-panel-list"]');
-  if (!panel || panel.offsetParent === null) return 0;
-
-  const items = panel.querySelectorAll(
-    '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"], img'
-  );
-  let count = 0;
-  const seen = new Set();
-  for (const node of items) {
-    const el = node.closest(
-      '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"]'
-    ) || node;
-    if (!(el instanceof HTMLElement) || seen.has(el) || isInChatList(el) || isEmojiIcon(el)) continue;
-    if (el.offsetParent === null) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < 8 || r.height < 8) continue;
-    seen.add(el);
-    count += 1;
-  }
-  return count;
-}
-"""
-
-EMOJI_CLICK_BY_INDEX_SCRIPT = """
-(index) => {
-  const isInChatList = (el) => !!el.closest(
-    '[class*="webcast-chatroom___list"], [class*="___items"], [class*="message"], [class*="item-wrapper"]'
-  );
-  const isEmojiIcon = (el) => !!el.closest('[class*="webcast-chatroom___emoji-icon"]');
-
-  const panel = document.querySelector('[class*="webcast-chatroom___emoji-panel"]')
-    || document.querySelector('[class*="webcast-chatroom___emoji-list"]')
-    || document.querySelector('[class*="emoji-panel-wrapper"]:not(.invisible)')
-    || document.querySelector('[class*="emoji-panel-wrapper"]')
-    || document.querySelector('[class*="emoji-panel-list"]')
-    || document.querySelector('[class*="webcast-chatroom"] [class*="emoji-panel"]');
-
-  const result = [];
-  const seen = new Set();
-
-  const push = (el) => {
-    if (!(el instanceof HTMLElement) || seen.has(el) || isInChatList(el) || isEmojiIcon(el)) return;
-    if (el.offsetParent === null) return;
-    const r = el.getBoundingClientRect();
-    if (r.width < 8 || r.height < 8 || r.width > 120 || r.height > 120) return;
-    seen.add(el);
-    result.push({ el, top: Math.round(r.top), left: Math.round(r.left) });
-  };
-
-  if (!panel) return false;
-
-  const officialItems = panel.querySelectorAll(
-    '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"]'
-  );
-  if (officialItems.length > 0) {
-    for (const el of officialItems) push(el);
-  }
-  if (result.length === 0) {
-    for (const img of panel.querySelectorAll('img')) {
-      push(img.closest('[class*="item"]') || img.parentElement || img);
-    }
-  }
-
-  result.sort((a, b) => (a.top === b.top ? a.left - b.left : a.top - b.top));
-  const target = result[index - 1]?.el;
-  if (!target) return false;
-  target.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-  target.click();
-  return true;
-}
-"""
-
-# 抓取表情面板列表（含图片 URL，供配置页展示）
-EMOJI_PANEL_LIST_SCRIPT = """
-() => {
-  const isInChatList = (el) => !!el.closest(
-    '[class*="webcast-chatroom___list"], [class*="___items"], [class*="message"], [class*="item-wrapper"]'
-  );
-  const isEmojiIcon = (el) => !!el.closest('[class*="webcast-chatroom___emoji-icon"]');
-
-  const panel = document.querySelector('[class*="webcast-chatroom___emoji-panel"]')
-    || document.querySelector('[class*="webcast-chatroom___emoji-list"]')
-    || document.querySelector('[class*="emoji-panel-wrapper"]:not(.invisible)')
-    || document.querySelector('[class*="emoji-panel-wrapper"]')
-    || document.querySelector('[class*="emoji-panel-list"]')
-    || document.querySelector('[class*="webcast-chatroom"] [class*="emoji-panel"]');
-
-  const result = [];
-  const seen = new Set();
-
-  const getImageUrl = (el) => {
-    if (!(el instanceof HTMLElement)) return '';
-    const img = el instanceof HTMLImageElement ? el : el.querySelector('img');
-    if (img instanceof HTMLImageElement) {
-      return img.currentSrc
-        || img.src
-        || img.getAttribute('data-src')
-        || img.getAttribute('data-original')
-        || '';
-    }
-    const bg = window.getComputedStyle(el).backgroundImage || '';
-    const match = bg.match(/url\\(["']?(.*?)["']?\\)/);
-    return match ? match[1] : '';
-  };
-
-  const push = (el) => {
-    if (!(el instanceof HTMLElement) || seen.has(el) || isInChatList(el) || isEmojiIcon(el)) return;
-    if (el.offsetParent === null) return;
-    const r = el.getBoundingClientRect();
-    if (r.width < 8 || r.height < 8 || r.width > 120 || r.height > 120) return;
-    const imageUrl = getImageUrl(el);
-    if (!imageUrl) return;
-    seen.add(el);
-    result.push({ el, top: Math.round(r.top), left: Math.round(r.left), imageUrl });
-  };
-
-  if (!panel) return [];
-
-  const officialItems = panel.querySelectorAll(
-    '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"]'
-  );
-  if (officialItems.length > 0) {
-    for (const el of officialItems) push(el);
-  }
-  if (result.length === 0) {
-    for (const img of panel.querySelectorAll('[class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"], img')) {
-      push(img.closest('[class*="item"]') || img.parentElement || img);
-    }
-  }
-
-  result.sort((a, b) => (a.top === b.top ? a.left - b.left : a.top - b.top));
-  return result.map((item, idx) => ({
-    index: idx + 1,
-    imageUrl: item.imageUrl,
-  }));
-}
-"""
-
-# 统计输入栏附近 / 弹层内可用表情数量（优先官方 emoji-panel）
-EMOJI_AVAILABLE_COUNT_SCRIPT = """
-() => {
-  const panelCount = (() => {
-    const panel = document.querySelector('[class*="webcast-chatroom___emoji-panel"]')
-      || document.querySelector('[class*="webcast-chatroom___emoji-list"]')
-      || document.querySelector('[class*="emoji-panel-wrapper"]:not(.invisible)')
-      || document.querySelector('[class*="emoji-panel-wrapper"]')
-      || document.querySelector('[class*="emoji-panel-list"]');
-    if (!panel || panel.offsetParent === null) return 0;
-    const isEmojiIcon = (el) => !!el.closest('[class*="webcast-chatroom___emoji-icon"]');
-    const items = panel.querySelectorAll(
-      '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"], img'
-    );
-    const seen = new Set();
-    let count = 0;
-    for (const node of items) {
-      const el = node.closest(
-        '[class*="webcast-chatroom___emoji-item"], [class*="emoji-item"], [class*="emoji-panel__common-img"], [class*="emoji-panel__all-img"]'
-      ) || node;
-      if (!(el instanceof HTMLElement) || seen.has(el) || isEmojiIcon(el)) continue;
-      if (el.offsetParent === null) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < 8 || r.height < 8) continue;
-      seen.add(el);
-      count += 1;
-    }
-    return count;
-  })();
-  if (panelCount > 0) return panelCount;
-
-  const isInChatList = (el) => !!el.closest(
-    '[class*="webcast-chatroom___list"], [class*="___items"], [class*="message"], [class*="item-wrapper"]'
-  );
-  const room = document.querySelector('[class*="webcast-chatroom"]');
-  const input = room?.querySelector('textarea, [contenteditable="true"]');
-  const inputRect = input?.getBoundingClientRect() || null;
-  if (!inputRect) return 0;
-
-  const seen = new Set();
-  let count = 0;
-  for (const sel of ['[class*="emoji-panel"]', '[class*="popover"]', '[class*="Popover"]']) {
-    for (const panel of document.querySelectorAll(sel)) {
-      if (!(panel instanceof HTMLElement) || panel.offsetParent === null || isInChatList(panel)) continue;
-      const r = panel.getBoundingClientRect();
-      if (r.width < 50 || r.height < 30 || r.top < inputRect.top - 420) continue;
-      for (const img of panel.querySelectorAll('img')) {
-        if (!(img instanceof HTMLImageElement) || img.offsetParent === null || seen.has(img)) continue;
-        const ir = img.getBoundingClientRect();
-        if (ir.width < 12 || ir.height < 12) continue;
-        seen.add(img);
-        count += 1;
-      }
-    }
-  }
-  return count;
-}
-"""
+# 面板内表情数量（与 emoji_panel 模块统一）
+EMOJI_AVAILABLE_COUNT_SCRIPT = EMOJI_PANEL_COUNT_SCRIPT
 
 # 获取输入栏左侧可点击的图标按钮坐标
 EMOJI_TOOLBAR_CANDIDATES_SCRIPT = """
@@ -471,6 +220,7 @@ class TaskRuntime:
     running: bool = False
     ready: bool = False
     sending: bool = False
+    recording: bool = False
     sent_count: int = 0
     last_screenshot: str = ""
     last_video: str = ""
@@ -490,12 +240,15 @@ class DouyinLiveAutomation:
         self._send_event = threading.Event()
         self._auto_send = False
         self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._excel_logger: CommentExcelLogger | None = None
         self._stop_reason: str = "任务结束"
         self._video_save_dir: Path | None = None
         self._browser_lock = threading.Lock()
+        self._resolved_live_room_url: str = ""
+        self._last_comment_preview: str = ""
 
     def start(self, config: AppConfig, *, auto_send: bool = False) -> None:
         """
@@ -509,8 +262,6 @@ class DouyinLiveAutomation:
 
         if not config.has_entry_target():
             raise ValueError("请填写抖音号，或填写直播间号/URL")
-        if not config.has_comment_content():
-            raise ValueError("请在评论输入框中输入文字或插入表情")
         if config.endTimeEnabled:
             end_at = config.resolve_end_time()
             if end_at is None:
@@ -529,22 +280,23 @@ class DouyinLiveAutomation:
         self.runtime.running = True
         self.runtime.ready = False
         self.runtime.sending = False
+        self.runtime.recording = False
         self.runtime.sent_count = 0
         self.runtime.last_error = ""
         self.runtime.last_screenshot = ""
         self.runtime.last_video = ""
         self.runtime.excel_report_path = ""
         self._video_save_dir = None
+        self._resolved_live_room_url = ""
+        self._last_comment_preview = ""
         preview = config.comment_preview()
-        self._append_log(f"单次评论内容：{preview}")
-        if config.screenshotEnabled:
-            self._append_log("发评后截图：已开启")
-        else:
-            self._append_log("发评后截图：已关闭")
+        if preview:
+            self._append_log(f"当前评论内容：{preview}")
+        self._append_log("每次发送前将重新读取配置文件中的参数")
         if config.videoRecordEnabled:
-            self._append_log(f"页面录屏：已开启，保存目录 {config.resolve_video_dir()}")
+            self._append_log("页面录屏：开始发送时自动录制，停止发送后保存")
         else:
-            self._append_log("页面录屏：已关闭")
+            self._append_log("页面录屏：未开启")
         if config.excelReportEnabled:
             self._append_log("Excel 评论统计：已开启")
         else:
@@ -556,9 +308,39 @@ class DouyinLiveAutomation:
         )
         self._thread.start()
 
+    def _load_live_config(self) -> AppConfig:
+        """
+        从配置文件加载最新运行参数。
+
+        @returns: 当前配置
+        """
+        return load_config()
+
+    def _sync_excel_logger(self, config: AppConfig) -> None:
+        """
+        按最新配置创建或复用 Excel 记录器。
+
+        @param config: 当前配置
+        """
+        if not config.excelReportEnabled:
+            return
+        report_dir = config.resolve_excel_report_dir()
+        live_url = config.resolve_live_room_url() or self._resolved_live_room_url
+        if self._excel_logger is not None:
+            if self._excel_logger.file_path.parent.resolve() == report_dir.resolve():
+                self._excel_logger.live_room_url = live_url
+                return
+        try:
+            self._excel_logger = CommentExcelLogger(report_dir, live_url)
+            self.runtime.excel_report_path = str(self._excel_logger.file_path)
+            self._append_log(f"Excel 统计文件: {self._excel_logger.file_path.name}")
+        except Exception as exc:
+            self._append_log(f"创建 Excel 统计失败: {exc}")
+            self._excel_logger = None
+
     def begin_send(self) -> None:
         """
-        开始发送评论。
+        开始发送评论（同时按配置自动开始录屏）。
 
         须在任务已进入直播间（ready）且尚未发送时调用。
         """
@@ -568,9 +350,14 @@ class DouyinLiveAutomation:
             raise RuntimeError("直播间尚未就绪，请稍候再点击「开始发送」")
         if self.runtime.sending or self._send_event.is_set():
             raise RuntimeError("已在发送中")
-        self.runtime.sending = True
+        config = self._load_live_config()
+        if not config.has_comment_content():
+            raise RuntimeError("请在评论输入框中输入文字或插入表情，并保存配置")
         self._send_event.set()
-        self._append_log("已收到开始发送指令")
+        if config.videoRecordEnabled:
+            self._append_log("已收到开始发送指令，将同步开始录屏")
+        else:
+            self._append_log("已收到开始发送指令")
 
     def stop(self) -> None:
         """停止自动评论任务。"""
@@ -580,6 +367,7 @@ class DouyinLiveAutomation:
         self.runtime.running = False
         self.runtime.ready = False
         self.runtime.sending = False
+        self.runtime.recording = False
         self._append_log("正在停止任务...")
         self._cleanup_browser()
 
@@ -621,15 +409,140 @@ class DouyinLiveAutomation:
         except Exception as exc:
             self._append_log(f"保存录屏失败: {exc}")
 
+    def _start_video_recording_if_enabled(self, config: AppConfig) -> None:
+        """
+        开始发送时按配置开启页面录屏。
+
+        Playwright 录屏需在创建 Context 时指定，因此在发评前切换为带录屏的 Context。
+
+        @param config: 当前配置
+        """
+        if not config.videoRecordEnabled:
+            return
+        if self._video_save_dir is not None:
+            return
+        if self._page is None or self._context is None:
+            return
+
+        live_url = self._resolved_live_room_url or self._page.url
+        if not live_url or "douyin.com" not in live_url:
+            self._append_log("页面录屏：无法获取直播间地址，跳过录制")
+            return
+
+        video_dir = config.resolve_video_dir()
+        video_dir.mkdir(parents=True, exist_ok=True)
+
+        with self._browser_lock:
+            if self._stop_event.is_set() or self._page is None or self._context is None:
+                return
+            try:
+                storage_state = self._context.storage_state()
+                old_context = self._context
+                self._page = None
+                self._context = None
+                try:
+                    old_context.close()
+                except Exception:
+                    pass
+
+                if self._playwright is None:
+                    self._playwright = sync_playwright().start()
+
+                self._browser = self._playwright.chromium.launch(
+                    headless=False,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+                self._context = self._browser.new_context(
+                    storage_state=storage_state,
+                    viewport={"width": 1440, "height": 900},
+                    locale="zh-CN",
+                    record_video_dir=str(video_dir),
+                    record_video_size={"width": 1440, "height": 900},
+                )
+                self._page = self._context.new_page()
+                self._video_save_dir = video_dir
+                self._page.goto(live_url, wait_until="domcontentloaded", timeout=90000)
+                self._page.wait_for_timeout(2000)
+                self._dismiss_overlays(self._page)
+                self._wait_for_comment_area(self._page)
+                self.runtime.recording = True
+                self._append_log(f"页面录屏已开始，保存目录 {video_dir}")
+            except Exception as exc:
+                self._video_save_dir = None
+                self.runtime.recording = False
+                self._append_log(f"开启页面录屏失败: {exc}")
+
+    def _reopen_live_room(self, live_url: str) -> None:
+        """
+        录屏结束后恢复普通浏览器会话（无录屏）。
+
+        @param live_url: 直播间地址
+        """
+        user_data_dir = PROJECT_ROOT / ".playwright-user-data"
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+        if self._playwright is None:
+            self._playwright = sync_playwright().start()
+        self._browser = None
+        self._context = self._playwright.chromium.launch_persistent_context(
+            user_data_dir=str(user_data_dir),
+            headless=False,
+            viewport={"width": 1440, "height": 900},
+            locale="zh-CN",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+        self._page.goto(live_url, wait_until="domcontentloaded", timeout=90000)
+        self._page.wait_for_timeout(2000)
+        self._dismiss_overlays(self._page)
+        self._wait_for_comment_area(self._page)
+        self._append_log("已恢复直播间页面（录屏已结束）")
+
+    def _stop_video_recording_session(self) -> None:
+        """停止发送时结束录屏并保存文件；任务未停止则恢复普通浏览器。"""
+        if self._video_save_dir is None:
+            return
+        live_url = self._resolved_live_room_url
+        keep_task = not self._stop_event.is_set() and self.runtime.running
+        with self._browser_lock:
+            page = self._page
+            context = self._context
+            browser = self._browser
+            video_dir = self._video_save_dir
+            self._page = None
+            self._context = None
+            self._browser = None
+            self._video_save_dir = None
+            self.runtime.recording = False
+
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            self._finalize_recorded_video(page, video_dir)
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+        if keep_task and live_url:
+            try:
+                self._reopen_live_room(live_url)
+            except Exception as exc:
+                self._append_log(f"恢复直播间失败: {exc}")
+
     def _cleanup_browser(self) -> None:
         """释放浏览器资源，并在开启录屏时落盘视频。"""
         with self._browser_lock:
             page = self._page
             context = self._context
+            browser = self._browser
             playwright = self._playwright
             video_dir = self._video_save_dir
             self._page = None
             self._context = None
+            self._browser = None
             self._playwright = None
             self._video_save_dir = None
 
@@ -639,11 +552,17 @@ class DouyinLiveAutomation:
                 except Exception:
                     pass
             self._finalize_recorded_video(page, video_dir)
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
             if playwright is not None:
                 try:
                     playwright.stop()
                 except Exception:
                     pass
+            self.runtime.recording = False
 
     def _wait_interval_or_stop(self, interval_seconds: int, end_at: datetime | None) -> bool:
         """
@@ -837,12 +756,6 @@ class DouyinLiveAutomation:
             "locale": "zh-CN",
             "args": ["--disable-blink-features=AutomationControlled"],
         }
-        if config.videoRecordEnabled:
-            video_dir = config.resolve_video_dir()
-            video_dir.mkdir(parents=True, exist_ok=True)
-            self._video_save_dir = video_dir
-            launch_kwargs["record_video_dir"] = str(video_dir)
-            launch_kwargs["record_video_size"] = {"width": 1440, "height": 900}
 
         self._playwright = sync_playwright().start()
         try:
@@ -892,24 +805,158 @@ class DouyinLiveAutomation:
             self._append_log(f"已解析直播间号: {rid}")
 
         self._wait_for_comment_area(self._page)
+        self._resolved_live_room_url = final_url
         self._append_log(f"已进入直播间，评论区就绪: {final_url}")
         return self._page
 
-    def _wait_until_send_or_stop(self) -> bool:
-        """
-        等待「开始发送」信号，或在停止时返回。
+    def _run_send_loop(self) -> None:
+        """发送评论循环：开始时录屏，结束时保存录屏（不再按秒截图）。"""
+        send_config = self._load_live_config()
+        if send_config.videoRecordEnabled:
+            self._start_video_recording_if_enabled(send_config)
+        try:
+            while not self._stop_event.is_set():
+                page = self._page
+                if page is None:
+                    raise RuntimeError("页面不可用，无法继续发送")
 
-        @returns: True 表示应开始发送；False 表示任务已取消
-        """
-        if self._auto_send:
-            self._send_event.set()
-            return True
+                config = self._load_live_config()
+                end_at = config.resolve_end_time() if config.endTimeEnabled else None
+                if config.endTimeEnabled and end_at is not None:
+                    self.runtime.end_time_text = end_at.strftime("%Y-%m-%d %H:%M:%S")
+                elif not config.endTimeEnabled:
+                    self.runtime.end_time_text = ""
 
-        self._append_log("等待点击「开始发送」后再发送评论…")
-        while not self._stop_event.is_set():
-            if self._send_event.wait(timeout=0.5):
-                return not self._stop_event.is_set()
-        return False
+                if end_at is not None and datetime.now() >= end_at:
+                    self._stop_reason = "到达结束时间自动停止"
+                    self._append_log(
+                        f"已到达结束时间 {end_at.strftime('%Y-%m-%d %H:%M:%S')}，任务自动停止",
+                    )
+                    break
+
+                if not config.has_comment_content():
+                    self._append_log("当前配置评论内容为空，跳过本次发送")
+                    if self._wait_interval_or_stop(config.intervalSeconds, end_at):
+                        if end_at is not None and datetime.now() >= end_at:
+                            self._stop_reason = "到达结束时间自动停止"
+                            self._append_log(
+                                f"已到达结束时间 {end_at.strftime('%Y-%m-%d %H:%M:%S')}，任务自动停止",
+                            )
+                        break
+                    continue
+
+                comment_parts = config.resolved_comment_parts()
+                comment_preview = config.comment_preview()
+                if comment_preview != self._last_comment_preview:
+                    self._append_log(f"评论内容已更新：{comment_preview}")
+                    self._last_comment_preview = comment_preview
+
+                self._sync_excel_logger(config)
+
+                sent_text = comment_preview
+                emoji_index = 0
+                emoji_count = 0
+                proof_path = ""
+                record_status = "失败"
+                record_remark = ""
+
+                try:
+                    sent_text, emoji_index, emoji_count = self._send_comment(
+                        page,
+                        comment_parts,
+                    )
+                    self.runtime.sent_count += 1
+                    self.runtime.last_error = ""
+                    record_status = "成功"
+                    self._append_log(
+                        f"已发送评论 ({self.runtime.sent_count}): {comment_preview}",
+                    )
+                    if self.runtime.recording and self.runtime.last_video:
+                        proof_path = self.runtime.last_video
+                    elif self.runtime.recording:
+                        proof_path = "录屏进行中"
+                except Exception as exc:
+                    self.runtime.last_error = str(exc)
+                    record_remark = str(exc)
+                    self._append_log(f"发送失败: {exc}")
+
+                if config.excelReportEnabled and self._excel_logger is not None:
+                    try:
+                        self._excel_logger.append_record(
+                            sequence=(
+                                self.runtime.sent_count
+                                if record_status == "成功"
+                                else self.runtime.sent_count + 1
+                            ),
+                            comment_text=comment_preview or sent_text,
+                            emoji_index=emoji_index,
+                            emoji_count=emoji_count,
+                            screenshot_path=proof_path,
+                            status=record_status,
+                            remark=record_remark,
+                        )
+                    except Exception as exc:
+                        self._append_log(f"写入 Excel 记录失败: {exc}")
+
+                if self._wait_interval_or_stop(config.intervalSeconds, end_at):
+                    if end_at is not None and datetime.now() >= end_at:
+                        self._stop_reason = "到达结束时间自动停止"
+                        self._append_log(
+                            f"已到达结束时间 {end_at.strftime('%Y-%m-%d %H:%M:%S')}，任务自动停止",
+                        )
+                    break
+        finally:
+            if send_config.videoRecordEnabled or self._video_save_dir is not None:
+                self._append_log("发送已停止，正在保存录屏…")
+                self._stop_video_recording_session()
+
+    def _run_loop(self, startup_config: AppConfig) -> None:
+        """
+        任务主循环：进房后等待「开始发送」。
+
+        @param startup_config: 启动任务时的配置（仅用于打开直播间）
+        """
+        startup_end_at = startup_config.resolve_end_time()
+        if startup_config.endTimeEnabled and startup_end_at is not None:
+            self._append_log(f"任务将于 {startup_end_at.strftime('%Y-%m-%d %H:%M:%S')} 自动停止")
+
+        try:
+            self._ensure_browser(startup_config)
+            self.runtime.ready = True
+            self._append_log("直播间已就绪，请点击「开始发送」")
+
+            if self._auto_send:
+                auto_config = self._load_live_config()
+                if auto_config.has_comment_content():
+                    self._send_event.set()
+                else:
+                    self._append_log("评论内容为空，CLI 未自动开始发送")
+
+            while not self._stop_event.is_set():
+                if self._send_event.is_set() and not self.runtime.sending:
+                    self.runtime.sending = True
+                    self._append_log("开始执行自动评论")
+                    try:
+                        self._run_send_loop()
+                    finally:
+                        self.runtime.sending = False
+                        self._send_event.clear()
+                    continue
+
+                if self._stop_event.wait(0.5):
+                    break
+
+        except Exception as exc:
+            self.runtime.last_error = str(exc)
+            self._append_log(f"任务异常: {exc}")
+        finally:
+            self.runtime.running = False
+            self.runtime.ready = False
+            self.runtime.sending = False
+            self.runtime.recording = False
+            self._finalize_excel_report(self.runtime.sent_count)
+            self._cleanup_browser()
+            self._append_log("任务已停止")
 
     def _safe_count(self, locator: Locator) -> int:
         """
@@ -1182,6 +1229,41 @@ class DouyinLiveAutomation:
                     return locator
         return None
 
+    def _resolve_emoji_image_url(self, part: CommentPart) -> str:
+        """
+        解析表情图片 URL（配置内嵌或本地缓存目录）。
+
+        @param part: 表情片段
+        @returns: 图片 URL；无则返回空字符串
+        """
+        if part.imageUrl.strip():
+            return part.imageUrl.strip()
+        from src.automation.emoji_catalog_store import load_emoji_catalog
+
+        catalog = load_emoji_catalog()
+        if catalog is None:
+            return ""
+        for item in catalog.items:
+            if item.index == part.index:
+                return item.imageUrl
+        return ""
+
+    def _click_emoji_by_object_key(self, page: Page, image_url: str) -> bool:
+        """
+        按图片 object path 点击表情（与抓取目录同一套去重逻辑）。
+
+        @param page: 页面对象
+        @param image_url: 表情图片 URL 或 path
+        @returns: 是否点击成功
+        """
+        key = emoji_object_key_from_url(image_url)
+        if not key:
+            return False
+        try:
+            return bool(page.evaluate(EMOJI_CLICK_BY_OBJECT_KEY_SCRIPT, key))
+        except Exception:
+            return False
+
     def _click_emoji_by_js(self, page: Page, emoji_index: int) -> bool:
         """
         通过 JS 点击 emoji-panel 内第 N 个表情。
@@ -1212,19 +1294,16 @@ class DouyinLiveAutomation:
             return visible
         return len(FALLBACK_UNICODE_EMOJIS)
 
-    def _click_emoji_at_index(self, page: Page, emoji_index: int) -> bool:
+    def _click_emoji_at_index(self, page: Page, emoji_index: int, image_url: str = "") -> bool:
         """
-        点击表情包中指定序号的表情（从 1 开始）。
+        点击表情包中指定表情：优先按图片 URL，再按统一视觉序号。
 
         @param page: 页面对象
         @param emoji_index: 表情序号
+        @param image_url: 可选，表情图片 URL
         @returns: 是否点击成功
         """
-        if self._click_douyin_emoji_at_index(page, emoji_index):
-            page.wait_for_timeout(200)
-            return True
-
-        if self._click_scoped_emoji_at_index(page, emoji_index):
+        if image_url and self._click_emoji_by_object_key(page, image_url):
             page.wait_for_timeout(200)
             return True
 
@@ -1232,18 +1311,6 @@ class DouyinLiveAutomation:
             page.wait_for_timeout(200)
             return True
 
-        emoji_items = self._find_emoji_items(page)
-        if emoji_items is not None:
-            total = self._safe_count(emoji_items)
-            if emoji_index <= total:
-                target = emoji_items.nth(emoji_index - 1)
-                try:
-                    target.scroll_into_view_if_needed(timeout=3000)
-                    target.click(timeout=3000, force=True)
-                    page.wait_for_timeout(200)
-                    return True
-                except Exception:
-                    pass
         return False
 
     def _append_text_to_input(self, page: Page, text: str, *, clear_first: bool) -> None:
@@ -1280,17 +1347,22 @@ class DouyinLiveAutomation:
         page.wait_for_timeout(150)
         self._append_log(f"已使用备用 Unicode 表情: {emoji_char}")
 
-    def _insert_single_emoji(self, page: Page, emoji_index: int) -> bool:
+    def _insert_single_emoji(self, page: Page, part: CommentPart) -> bool:
         """
         向输入框插入单个表情。
 
         @param page: 页面对象
-        @param emoji_index: 表情序号（从 1 开始）
+        @param part: 表情片段
         @returns: 是否插入成功
         """
-        emoji_index = max(1, emoji_index)
+        emoji_index = max(1, part.index)
+        image_url = self._resolve_emoji_image_url(part)
         for attempt in range(3):
-            if self._open_emoji_panel(page) and self._click_emoji_at_index(page, emoji_index):
+            if self._open_emoji_panel(page) and self._click_emoji_at_index(
+                page,
+                emoji_index,
+                image_url,
+            ):
                 page.wait_for_timeout(200)
                 return True
             self._append_log(f"插入表情 {emoji_index} 失败，重试 ({attempt + 1}/3)")
@@ -1299,8 +1371,12 @@ class DouyinLiveAutomation:
                 page.wait_for_timeout(200)
             except Exception:
                 pass
-        self._append_unicode_emoji(page, emoji_index)
-        return True
+        hint = "请重新「从直播间加载表情」后再试"
+        if image_url:
+            self._append_log(f"插入表情 {emoji_index} 失败（已按图片匹配），{hint}")
+        else:
+            self._append_log(f"插入表情 {emoji_index} 失败（无图片 URL），{hint}")
+        return False
 
     def _send_comment(
         self,
@@ -1340,7 +1416,7 @@ class DouyinLiveAutomation:
                     input_box = self._focus_comment_input(page)
                     self._type_into_comment_input(page, input_box, "")
                     is_first = False
-                self._insert_single_emoji(page, part.index)
+                self._insert_single_emoji(page, part)
                 emoji_indices.append(part.index)
 
         page.wait_for_timeout(300)
@@ -1351,126 +1427,3 @@ class DouyinLiveAutomation:
         preview = "".join(text_chunks)
         first_emoji = emoji_indices[0] if emoji_indices else 0
         return preview, first_emoji, len(emoji_indices)
-
-    def _run_loop(self, config: AppConfig) -> None:
-        """
-        评论循环主逻辑：支持文字、表情，或二者组合发送。
-
-        @param config: 运行配置
-        """
-        screenshot_dir = config.resolve_screenshot_dir()
-        end_at = config.resolve_end_time()
-        comment_parts = config.resolved_comment_parts()
-        comment_preview = config.comment_preview()
-
-        if config.endTimeEnabled and end_at is not None:
-            self._append_log(f"任务将于 {end_at.strftime('%Y-%m-%d %H:%M:%S')} 自动停止")
-
-        if config.excelReportEnabled:
-            try:
-                self._excel_logger = CommentExcelLogger(
-                    config.resolve_excel_report_dir(),
-                    config.resolve_live_room_url(),
-                )
-                self.runtime.excel_report_path = str(self._excel_logger.file_path)
-                self._append_log(f"Excel 统计文件: {self._excel_logger.file_path.name}")
-            except Exception as exc:
-                self._append_log(f"创建 Excel 统计失败: {exc}")
-                self._excel_logger = None
-
-        try:
-            page = self._ensure_browser(config)
-            self.runtime.ready = True
-
-            if not self._wait_until_send_or_stop():
-                self._append_log("任务在开始发送前已取消")
-                return
-
-            self.runtime.sending = True
-            self._append_log("开始执行自动评论")
-
-            while not self._stop_event.is_set():
-                if end_at is not None and datetime.now() >= end_at:
-                    self._stop_reason = "到达结束时间自动停止"
-                    self._append_log(
-                        f"已到达结束时间 {end_at.strftime('%Y-%m-%d %H:%M:%S')}，任务自动停止",
-                    )
-                    break
-
-                sent_text = comment_preview
-                emoji_index = 0
-                emoji_count = 0
-                screenshot_path = ""
-                record_status = "失败"
-                record_remark = ""
-
-                try:
-                    chat_count_before = get_chat_message_count(page)
-                    sent_text, emoji_index, emoji_count = self._send_comment(
-                        page,
-                        comment_parts,
-                    )
-                    self.runtime.sent_count += 1
-                    self.runtime.last_error = ""
-                    record_status = "成功"
-                    self._append_log(
-                        f"已发送评论 ({self.runtime.sent_count}): {comment_preview}",
-                    )
-
-                    if config.screenshotEnabled:
-                        saved, detected = capture_after_comment(
-                            page,
-                            screenshot_dir,
-                            self.runtime.sent_count,
-                            chat_count_before,
-                            config.screenshotWaitSeconds,
-                        )
-                        screenshot_path = str(saved)
-                        self.runtime.last_screenshot = screenshot_path
-                        if detected:
-                            self._append_log(f"评论已出现在聊天区，已保存截图: {saved.name}")
-                        else:
-                            self._append_log(
-                                f"等待 {config.screenshotWaitSeconds}s 后已截图（未检测到新评论）: {saved.name}",
-                            )
-                except Exception as exc:
-                    self.runtime.last_error = str(exc)
-                    record_remark = str(exc)
-                    self._append_log(f"发送失败: {exc}")
-
-                if self._excel_logger is not None:
-                    try:
-                        self._excel_logger.append_record(
-                            sequence=(
-                                self.runtime.sent_count
-                                if record_status == "成功"
-                                else self.runtime.sent_count + 1
-                            ),
-                            comment_text=comment_preview or sent_text,
-                            emoji_index=emoji_index,
-                            emoji_count=emoji_count,
-                            screenshot_path=screenshot_path,
-                            status=record_status,
-                            remark=record_remark,
-                        )
-                    except Exception as exc:
-                        self._append_log(f"写入 Excel 记录失败: {exc}")
-
-                if self._wait_interval_or_stop(config.intervalSeconds, end_at):
-                    if end_at is not None and datetime.now() >= end_at:
-                        self._stop_reason = "到达结束时间自动停止"
-                        self._append_log(
-                            f"已到达结束时间 {end_at.strftime('%Y-%m-%d %H:%M:%S')}，任务自动停止",
-                        )
-                    break
-
-        except Exception as exc:
-            self.runtime.last_error = str(exc)
-            self._append_log(f"任务异常: {exc}")
-        finally:
-            self.runtime.running = False
-            self.runtime.ready = False
-            self.runtime.sending = False
-            self._finalize_excel_report(self.runtime.sent_count)
-            self._cleanup_browser()
-            self._append_log("任务已停止")

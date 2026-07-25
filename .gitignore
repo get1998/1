@@ -12,8 +12,12 @@ frontend/node_modules/
 frontend/dist/
 
 config.json
+
+# 运行时生成的资源（截图 / Excel 报表 / 录屏）
 screenshots/
 reports/
+videos/
+
 .playwright-user-data/
 data/emoji-catalog.json
 

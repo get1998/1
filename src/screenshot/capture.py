@@ -134,7 +134,7 @@ def capture_after_comment(
     directory: Path,
     sequence: int,
     previous_count: int,
-    wait_seconds: int = 3,
+    wait_seconds: float = 3,
 ) -> tuple[Path, bool]:
     """
     等待评论出现在聊天区后再截图。
@@ -143,10 +143,10 @@ def capture_after_comment(
     @param directory: 截图存储目录
     @param sequence: 当前发送序号
     @param previous_count: 发送前聊天消息条数
-    @param wait_seconds: 最短等待秒数（评论未检测到也会等待这么久）
+    @param wait_seconds: 最短等待秒数（支持 0.5；评论未检测到也会等待这么久）
     @returns: (截图路径, 是否检测到新评论)
     """
-    min_wait_ms = max(wait_seconds, 1) * 1000
+    min_wait_ms = max(wait_seconds, 0.5) * 1000
     max_wait_ms = max(min_wait_ms + 5000, 15000)
     start = time.time()
 

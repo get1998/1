@@ -3,7 +3,8 @@ import { nextTick, ref, watch } from 'vue'
 import type { InputInstance } from 'element-plus'
 import EmojiPicker from '@/components/EmojiPicker.vue'
 import type { CommentPart } from '@/api/types'
-import { parseInputTextToParts, partsToInputText } from '@/utils/commentParts'
+import { parseInputTextToParts, partsToInputText, enrichCommentPartsWithCatalog } from '@/utils/commentParts'
+import type { EmojiCatalogItem } from '@/api/types'
 
 /** 正常聊天输入框：直接打字，点表情插入光标处 */
 const props = defineProps<{
@@ -19,6 +20,8 @@ const props = defineProps<{
   waitLoginSeconds: number
   /** 任务是否运行中 */
   running: boolean
+  /** 紧凑模式（中列/窄布局） */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,13 +31,15 @@ const emit = defineEmits<{
 
 const inputRef = ref<InputInstance>()
 const inputText = ref('')
+const catalogItems = ref<EmojiCatalogItem[]>([])
 
 /**
- * 提交输入内容为片段
+ * 提交输入内容为片段（并从表情目录补全 imageUrl）
  * @param value - 输入框文本
  */
 function commitInput(value: string): void {
-  emit('update:modelValue', parseInputTextToParts(value))
+  const parsed = parseInputTextToParts(value)
+  emit('update:modelValue', enrichCommentPartsWithCatalog(parsed, catalogItems.value))
 }
 
 /**
@@ -91,18 +96,20 @@ watch(
 </script>
 
 <template>
-  <div class="comment-composer">
+  <div class="comment-composer" :class="{ 'comment-composer--compact': compact }">
     <el-input
       ref="inputRef"
       :model-value="inputText"
       type="textarea"
-      :rows="3"
+      :rows="compact ? 2 : 3"
       maxlength="200"
-      show-word-limit
-      placeholder="像正常聊天一样输入，点下方表情会插入到光标位置"
+      :show-word-limit="!compact"
+      placeholder="输入评论，点表情插入光标处"
       @update:model-value="handleInput"
     />
-    <div class="composer-tip">表情在输入框里显示为 [表情N]，发送时会按顺序转成抖音表情</div>
+    <div v-if="!compact" class="composer-tip">
+      表情显示为 [表情N]；发送时按图片 URL 精确匹配，请先加载表情目录
+    </div>
 
     <EmojiPicker
       :douyin-id="douyinId"
@@ -110,8 +117,10 @@ watch(
       :live-room-url="liveRoomUrl"
       :wait-login-seconds="waitLoginSeconds"
       :running="running"
+      :compact="compact"
       insert-mode
       @pick="handlePickEmoji"
+      @catalog-loaded="catalogItems = $event"
     />
   </div>
 </template>
@@ -119,6 +128,12 @@ watch(
 <style scoped lang="scss">
 .comment-composer {
   width: 100%;
+
+  &--compact {
+    :deep(.el-textarea__inner) {
+      font-size: 13px;
+    }
+  }
 }
 
 .composer-tip {

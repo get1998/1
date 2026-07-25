@@ -8,11 +8,11 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.automation.douyin_live import (
     DouyinLiveAutomation,
-    EMOJI_PANEL_LIST_SCRIPT,
     ENSURE_INPUT_VISIBLE_SCRIPT,
     PROJECT_ROOT,
     TaskRuntime,
 )
+from src.automation.emoji_panel import EMOJI_PANEL_LIST_SCRIPT
 from src.automation.live_room_entry import enter_live_room
 from src.config_loader import AppConfig
 

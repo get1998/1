@@ -74,6 +74,7 @@ class CommentPart(BaseModel):
     type: Literal["text", "emoji"] = Field(description="片段类型")
     text: str = Field(default="", description="文字内容（type=text）")
     index: int = Field(default=1, ge=1, le=100, description="表情序号（type=emoji）")
+    imageUrl: str = Field(default="", description="表情图片 URL（type=emoji，用于精确点击）")
 
 
 def normalize_comment_parts(parts: list[CommentPart]) -> list[CommentPart]:
@@ -95,7 +96,13 @@ def normalize_comment_parts(parts: list[CommentPart]) -> list[CommentPart]:
                 result.append(CommentPart(type="text", text=text))
             continue
         if part.type == "emoji" and part.index >= 1:
-            result.append(CommentPart(type="emoji", index=part.index))
+            result.append(
+                CommentPart(
+                    type="emoji",
+                    index=part.index,
+                    imageUrl=part.imageUrl.strip(),
+                ),
+            )
     return result
 
 
@@ -179,12 +186,12 @@ class AppConfig(BaseModel):
         le=100,
         description="表情序号（兼容旧配置，由 commentParts 同步）",
     )
-    screenshotEnabled: bool = Field(default=True, description="是否启用发评后截图")
-    screenshotWaitSeconds: int = Field(
+    screenshotEnabled: bool = Field(default=False, description="是否启用发评后截图（已弃用，留证请用录屏）")
+    screenshotWaitSeconds: float = Field(
         default=3,
-        ge=1,
+        ge=0.5,
         le=30,
-        description="发评后等待评论出现在聊天区再截图（秒）",
+        description="发评后等待评论出现在聊天区再截图（秒，支持 0.5 步进）",
     )
     videoRecordEnabled: bool = Field(
         default=True,
@@ -247,8 +254,8 @@ class AppConfig(BaseModel):
             ]
         if "douyinId" not in data:
             data["douyinId"] = ""
-        if "webRid" not in data or not str(data.get("webRid") or "").strip():
-            # 仅当已有完整直播间 URL 时，从 URL 回填 webRid；不要把抖音号误当 webRid
+        if "webRid" not in data:
+            # 仅旧配置缺字段时从 URL 回填；显式传空字符串表示用户已清空
             data["webRid"] = extract_live_room_id(str(data.get("liveRoomUrl") or ""))
         if "screenshotWaitSeconds" not in data:
             data["screenshotWaitSeconds"] = 3
@@ -283,8 +290,10 @@ class AppConfig(BaseModel):
             self.webRid = web_rid
             self.liveRoomUrl = build_live_room_url(web_rid)
         elif url_rid:
-            self.webRid = url_rid
-            self.liveRoomUrl = build_live_room_url(url_rid)
+            # 仅 URL 直达：不反填 webRid，避免清空直播间号后又被 URL 顶回来
+            self.webRid = ""
+            trimmed = self.liveRoomUrl.strip()
+            self.liveRoomUrl = trimmed or build_live_room_url(url_rid)
         else:
             self.webRid = ""
             # 仅抖音号模式：清空直达 URL，避免误当成房间号打开

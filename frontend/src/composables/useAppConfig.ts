@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   commentText: '',
   emojisPerSend: 0,
   emojiIndex: 1,
-  screenshotEnabled: true,
+  screenshotEnabled: false,
   screenshotWaitSeconds: 3,
   videoRecordEnabled: true,
   videoDir: './videos',
@@ -42,30 +42,32 @@ const DEFAULT_CONFIG: AppConfig = {
 }
 
 /**
- * 同步直播间直达字段与存储目录
+ * 更新截图/报表/录屏目录
+ * @param form - 配置表单
+ */
+function updateStorageDirs(form: AppConfig): void {
+  const storageKey = form.webRid || form.douyinId || extractLiveRoomId(form.liveRoomUrl)
+  form.screenshotDir = buildScreenshotDir(storageKey)
+  form.excelReportDir = buildExcelReportDir(storageKey)
+  form.videoDir = buildVideoDir(storageKey)
+}
+
+/**
+ * 同步直播间直达字段与存储目录（加载/保存时用）
  * @param form - 配置表单
  */
 function syncLiveRoomFields(form: AppConfig): void {
   form.douyinId = normalizeAccountId(form.douyinId)
   const webRid = normalizeAccountId(form.webRid)
-  const urlRid = extractLiveRoomId(form.liveRoomUrl)
-
   if (webRid) {
     form.webRid = webRid
     form.liveRoomUrl = buildLiveRoomUrl(webRid)
-  } else if (urlRid) {
-    form.webRid = urlRid
-    form.liveRoomUrl = buildLiveRoomUrl(urlRid)
   } else {
     form.webRid = ''
-    // 仅抖音号模式：不伪造直播间 URL
-    form.liveRoomUrl = ''
+    // 保留单独填写的 URL，不从 URL 反填 webRid
+    form.liveRoomUrl = form.liveRoomUrl.trim()
   }
-
-  const storageKey = form.webRid || form.douyinId || extractLiveRoomId(form.liveRoomUrl)
-  form.screenshotDir = buildScreenshotDir(storageKey)
-  form.excelReportDir = buildExcelReportDir(storageKey)
-  form.videoDir = buildVideoDir(storageKey)
+  updateStorageDirs(form)
 }
 
 /**
@@ -146,7 +148,7 @@ export function useAppConfig() {
         commentText: data.commentText ?? '',
         emojisPerSend: data.emojisPerSend ?? 0,
         emojiIndex: data.emojiIndex ?? 1,
-        screenshotEnabled: data.screenshotEnabled ?? true,
+        screenshotEnabled: data.screenshotEnabled ?? false,
         screenshotWaitSeconds: data.screenshotWaitSeconds ?? 3,
         videoRecordEnabled: data.videoRecordEnabled ?? true,
         videoDir: data.videoDir ?? './videos',
@@ -194,9 +196,41 @@ export function useAppConfig() {
   }
 
   watch(
-    () => [form.douyinId, form.webRid, form.liveRoomUrl] as const,
+    () => form.webRid,
+    (newValue, oldValue) => {
+      const rid = normalizeAccountId(newValue)
+      const prevRid = normalizeAccountId(oldValue ?? '')
+      if (rid) {
+        form.webRid = rid
+        form.liveRoomUrl = buildLiveRoomUrl(rid)
+      } else {
+        form.webRid = ''
+        const urlRid = extractLiveRoomId(form.liveRoomUrl)
+        // 清空直播间号时，同步清掉由该号自动生成的 URL，避免又被反填回来
+        if (prevRid && urlRid === prevRid) {
+          form.liveRoomUrl = ''
+        }
+      }
+      updateStorageDirs(form)
+    },
+  )
+
+  watch(
+    () => form.liveRoomUrl,
     () => {
-      syncLiveRoomFields(form)
+      if (normalizeAccountId(form.webRid)) {
+        return
+      }
+      form.liveRoomUrl = form.liveRoomUrl.trim()
+      updateStorageDirs(form)
+    },
+  )
+
+  watch(
+    () => form.douyinId,
+    () => {
+      form.douyinId = normalizeAccountId(form.douyinId)
+      updateStorageDirs(form)
     },
   )
 

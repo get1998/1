@@ -12,6 +12,7 @@ export function useTaskControl(getConfig: () => AppConfig) {
     running: false,
     ready: false,
     sending: false,
+    recording: false,
     sentCount: 0,
     lastScreenshot: '',
     lastVideo: '',
@@ -44,7 +45,7 @@ export function useTaskControl(getConfig: () => AppConfig) {
     starting.value = true
     try {
       await startTaskApi(getConfig())
-      ElMessage.success('任务已启动，进入直播间后请点击「开始发送」')
+      ElMessage.success('任务已启动，进入直播间后点击「开始发送」')
       await refreshStatus()
     } catch (error) {
       ElMessage.error(error instanceof Error ? error.message : '启动任务失败')
@@ -54,7 +55,7 @@ export function useTaskControl(getConfig: () => AppConfig) {
   }
 
   /**
-   * 开始发送评论
+   * 开始发送评论（同步开始录屏）
    */
   async function beginSend(): Promise<void> {
     beginningSend.value = true

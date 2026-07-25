@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { TaskStatus } from '@/api/types'
 
-/** 任务状态展示组件 */
+/** 任务状态展示组件（紧凑） */
 defineProps<{
   /** 任务状态数据 */
   status: TaskStatus
@@ -16,13 +16,19 @@ function phaseText(status: TaskStatus): string {
   if (!status.running) {
     return '已停止'
   }
+  if (status.sending && status.recording) {
+    return '录屏/发送中'
+  }
   if (status.sending) {
     return '发送中'
   }
-  if (status.ready) {
-    return '已就绪（等待开始发送）'
+  if (status.recording) {
+    return '录屏中'
   }
-  return '进入直播间中…'
+  if (status.ready) {
+    return '已就绪'
+  }
+  return '进房中…'
 }
 </script>
 
@@ -32,47 +38,41 @@ function phaseText(status: TaskStatus): string {
       <span class="panel-title">运行状态</span>
     </template>
 
-    <div class="status-grid">
-      <div class="status-item">
-        <div class="status-label">任务状态</div>
-        <div
+    <div class="status-list">
+      <div class="status-row">
+        <span class="status-label">状态</span>
+        <span
           class="status-value"
-          :class="status.running ? (status.sending ? 'is-sending' : 'is-ready') : 'is-stopped'"
+          :class="
+            status.running
+              ? status.sending || status.recording
+                ? 'is-sending'
+                : 'is-ready'
+              : 'is-stopped'
+          "
         >
           {{ phaseText(status) }}
-        </div>
+        </span>
       </div>
-
-      <div class="status-item">
-        <div class="status-label">已发送次数</div>
-        <div class="status-value">{{ status.sentCount }}</div>
+      <div class="status-row">
+        <span class="status-label">已发</span>
+        <span class="status-value">{{ status.sentCount }} 次</span>
       </div>
-
-      <div class="status-item">
-        <div class="status-label">计划结束</div>
-        <div class="status-value">{{ status.endTimeText || '未设置' }}</div>
+      <div class="status-row">
+        <span class="status-label">结束</span>
+        <span class="status-value">{{ status.endTimeText || '未设置' }}</span>
       </div>
-
-      <div class="status-item">
-        <div class="status-label">Excel 报表</div>
-        <div class="status-value">{{ status.excelReportPath || '暂无' }}</div>
+      <div v-if="status.lastVideo" class="status-row">
+        <span class="status-label">录屏</span>
+        <span class="status-value status-value--path">{{ status.lastVideo }}</span>
       </div>
-
-      <div class="status-item">
-        <div class="status-label">最近截图</div>
-        <div class="status-value">{{ status.lastScreenshot || '暂无' }}</div>
+      <div v-if="status.excelReportPath" class="status-row">
+        <span class="status-label">报表</span>
+        <span class="status-value status-value--path">{{ status.excelReportPath }}</span>
       </div>
-
-      <div class="status-item">
-        <div class="status-label">最近录屏</div>
-        <div class="status-value">{{ status.lastVideo || '暂无' }}</div>
-      </div>
-
-      <div class="status-item">
-        <div class="status-label">最近错误</div>
-        <div class="status-value" :class="{ 'is-error': !!status.lastError }">
-          {{ status.lastError || '无' }}
-        </div>
+      <div v-if="status.lastError" class="status-row">
+        <span class="status-label">错误</span>
+        <span class="status-value is-error">{{ status.lastError }}</span>
       </div>
     </div>
   </el-card>
@@ -80,41 +80,59 @@ function phaseText(status: TaskStatus): string {
 
 <style scoped lang="scss">
 .panel-card {
-  margin-bottom: 20px;
+  margin-bottom: 0;
   border-radius: 12px;
+
+  :deep(.el-card__header) {
+    padding: 10px 16px;
+  }
+
+  :deep(.el-card__body) {
+    padding: 8px 16px 12px;
+  }
 }
 
 .panel-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
 }
 
-.status-grid {
+.status-list {
   display: flex;
-  flex-wrap: wrap;
-  margin: -8px;
+  flex-direction: column;
 }
 
-.status-item {
-  flex: 1 1 180px;
-  margin: 8px;
-  padding: 16px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+.status-row {
+  display: flex;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid #f3f4f6;
+
+  &:last-child {
+    border-bottom: none;
+  }
 }
 
 .status-label {
-  margin-bottom: 6px;
-  color: #6b7280;
+  flex: 0 0 36px;
+  color: #9ca3af;
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .status-value {
+  flex: 1;
+  min-width: 0;
   color: #111827;
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1.5;
   word-break: break-all;
+
+  &--path {
+    font-size: 12px;
+    font-weight: 500;
+  }
 
   &.is-sending {
     color: #059669;

@@ -21,6 +21,8 @@ const props = withDefaults(
     running: boolean
     /** 插入模式：点击表情触发 pick，不强制单选 */
     insertMode?: boolean
+    /** 紧凑模式 */
+    compact?: boolean
   }>(),
   {
     modelValue: 0,
@@ -28,6 +30,7 @@ const props = withDefaults(
     webRid: '',
     liveRoomUrl: '',
     insertMode: false,
+    compact: false,
   },
 )
 
@@ -154,18 +157,19 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="emoji-picker">
+  <div class="emoji-picker" :class="{ 'emoji-picker--compact': compact }">
     <div class="emoji-picker__toolbar">
       <el-button
         type="primary"
         plain
+        :size="compact ? 'small' : 'default'"
         :loading="refreshing"
         :disabled="running || loading"
         @click="refreshEmojis"
       >
-        {{ hasCachedCatalog ? '重新抓取表情' : '从直播间加载表情' }}
+        {{ hasCachedCatalog ? '刷新表情' : '加载表情' }}
       </el-button>
-      <span v-if="insertMode" class="emoji-picker__hint">
+      <span v-if="insertMode && !compact" class="emoji-picker__hint">
         点击表情插入到上方输入框光标处
       </span>
       <span v-else-if="selectedItem" class="emoji-picker__hint">
@@ -183,7 +187,7 @@ onMounted(() => {
     <div v-if="items.length > 0" class="emoji-picker__grid">
       <button
         v-for="item in items"
-        :key="item.index"
+        :key="`${item.index}-${item.imageUrl}`"
         type="button"
         class="emoji-picker__item"
         :class="{ 'is-selected': item.index === highlightIndex }"
@@ -194,8 +198,11 @@ onMounted(() => {
       </button>
     </div>
 
-    <div v-else-if="!loading" class="emoji-picker__empty">
+    <div v-else-if="!loading && !compact" class="emoji-picker__empty">
       填写抖音号（或直播间号）后点击「从直播间加载表情」，只需抓取一次；之后打开页面会自动读取本地缓存。
+    </div>
+    <div v-else-if="!loading && compact" class="emoji-picker__empty emoji-picker__empty--compact">
+      填写抖音号后点击「加载表情」
     </div>
   </div>
 </template>
@@ -203,6 +210,29 @@ onMounted(() => {
 <style scoped lang="scss">
 .emoji-picker {
   width: 100%;
+
+  &--compact {
+    .emoji-picker__toolbar {
+      margin-bottom: 8px;
+    }
+
+    .emoji-picker__grid {
+      max-height: 140px;
+      padding: 8px;
+    }
+
+    .emoji-picker__item {
+      width: 40px;
+      height: 40px;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+
+    .emoji-picker__empty--compact {
+      padding: 10px;
+      font-size: 12px;
+    }
+  }
 }
 
 .emoji-picker__toolbar {

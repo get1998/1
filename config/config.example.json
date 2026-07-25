@@ -11,7 +11,7 @@
   "commentText": "主播加油",
   "emojisPerSend": 1,
   "emojiIndex": 1,
-  "screenshotEnabled": true,
+  "screenshotEnabled": false,
   "screenshotWaitSeconds": 3,
   "videoRecordEnabled": true,
   "videoDir": "./videos",
