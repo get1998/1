@@ -13,6 +13,7 @@ from src.automation.douyin_live import (
     PROJECT_ROOT,
     TaskRuntime,
 )
+from src.automation.live_room_entry import enter_live_room
 from src.config_loader import AppConfig
 
 
@@ -43,11 +44,8 @@ class EmojiCatalogFetcher:
         @param config: 运行配置（需包含 liveRoomUrl）
         @returns: 表情目录
         """
-        live_room_url = config.liveRoomUrl.strip()
-        if not live_room_url:
-            raise ValueError("请先配置直播间 URL")
-        if "douyin.com" not in live_room_url:
-            raise ValueError("直播间 URL 需包含 douyin.com")
+        if not config.has_entry_target():
+            raise ValueError("请填写抖音号，或填写直播间号/URL")
 
         user_data_dir = PROJECT_ROOT / ".playwright-user-data"
         user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -65,13 +63,14 @@ class EmojiCatalogFetcher:
                 message = str(exc)
                 if "Executable doesn't exist" in message:
                     raise RuntimeError(
-                        "Playwright 浏览器未安装。请执行: python -m playwright install chromium",
+                        "Playwright 浏览器未安装或浏览器路径无效。"
+                        "请执行: .\\.venv\\Scripts\\python.exe -m playwright install chromium",
                     ) from exc
                 raise
 
             page = context.pages[0] if context.pages else context.new_page()
             try:
-                items = self._collect_from_page(page, live_room_url, config.waitLoginSeconds)
+                items = self._collect_from_page(page, config)
             finally:
                 context.close()
 
@@ -80,22 +79,27 @@ class EmojiCatalogFetcher:
     def _collect_from_page(
         self,
         page: Page,
-        live_room_url: str,
-        wait_login_seconds: int,
+        config: AppConfig,
     ) -> list[EmojiCatalogItem]:
         """
         在页面上打开表情面板并收集表情。
 
         @param page: 页面对象
-        @param live_room_url: 直播间 URL
-        @param wait_login_seconds: 等待登录秒数
+        @param config: 运行配置
         @returns: 表情列表
         """
-        page.goto(live_room_url, wait_until="domcontentloaded", timeout=90000)
-        page.wait_for_timeout(3000)
+        logs: list[str] = []
 
-        if wait_login_seconds > 0:
-            page.wait_for_timeout(wait_login_seconds * 1000)
+        def _log(message: str) -> None:
+            logs.append(message)
+
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=90000)
+        page.wait_for_timeout(2000)
+        if config.waitLoginSeconds > 0:
+            page.wait_for_timeout(config.waitLoginSeconds * 1000)
+
+        enter_live_room(page, config, _log)
+        page.wait_for_timeout(2000)
 
         page.evaluate(ENSURE_INPUT_VISIBLE_SCRIPT)
         page.wait_for_timeout(500)

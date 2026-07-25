@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import src.playwright_env  # noqa: F401  # 启动前修正 PLAYWRIGHT_BROWSERS_PATH
+
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -65,7 +67,9 @@ def update_config(config: AppConfig) -> AppConfig:
 class EmojiCatalogRequest(BaseModel):
     """抓取表情目录请求。"""
 
-    liveRoomUrl: str
+    douyinId: str = ""
+    webRid: str = ""
+    liveRoomUrl: str = ""
     waitLoginSeconds: int = 30
 
 
@@ -84,6 +88,8 @@ def fetch_emoji_catalog(body: EmojiCatalogRequest) -> EmojiCatalogResponse:
     if runtime.running:
         raise HTTPException(status_code=409, detail="任务运行中，请先停止任务再加载表情")
     config = AppConfig(
+        douyinId=body.douyinId,
+        webRid=body.webRid,
         liveRoomUrl=body.liveRoomUrl,
         waitLoginSeconds=body.waitLoginSeconds,
     )

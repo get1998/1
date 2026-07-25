@@ -9,7 +9,8 @@ from datetime import datetime
 
 from playwright.sync_api import BrowserContext, Frame, Locator, Page, Playwright, sync_playwright
 
-from src.config_loader import AppConfig, PROJECT_ROOT
+from src.automation.live_room_entry import enter_live_room
+from src.config_loader import AppConfig, CommentPart, PROJECT_ROOT, extract_live_room_id
 from src.report.excel_logger import CommentExcelLogger
 from src.screenshot.capture import capture_after_comment, get_chat_message_count
 
@@ -501,12 +502,10 @@ class DouyinLiveAutomation:
         if self.runtime.running:
             raise RuntimeError("任务已在运行中")
 
-        if not config.liveRoomUrl.strip():
-            raise ValueError("请先配置直播间 URL")
-        if config.emojisPerSend < 1:
-            raise ValueError("请先配置单次表情数量")
-        if config.emojiIndex < 1:
-            raise ValueError("请先配置表情序号")
+        if not config.has_entry_target():
+            raise ValueError("请填写抖音号，或填写直播间号/URL")
+        if not config.has_comment_content():
+            raise ValueError("请在评论输入框中输入文字或插入表情")
         if config.endTimeEnabled:
             end_at = config.resolve_end_time()
             if end_at is None:
@@ -529,9 +528,8 @@ class DouyinLiveAutomation:
         self.runtime.last_error = ""
         self.runtime.last_screenshot = ""
         self.runtime.excel_report_path = ""
-        self._append_log(
-            f"单次评论固定第 {config.emojiIndex} 个表情，每种 {config.emojisPerSend} 个",
-        )
+        preview = config.comment_preview()
+        self._append_log(f"单次评论内容：{preview}")
         if config.screenshotEnabled:
             self._append_log("发评后截图：已开启")
         else:
@@ -796,17 +794,24 @@ class DouyinLiveAutomation:
             message = str(exc)
             if "Executable doesn't exist" in message:
                 raise RuntimeError(
-                    "Playwright 浏览器未安装。请在项目目录打开终端执行："
-                    "python -m playwright install chromium，然后重启后端再试",
+                    "Playwright 浏览器未安装或浏览器路径无效。"
+                    "请在项目目录激活 .venv 后执行："
+                    ".\\.venv\\Scripts\\python.exe -m playwright install chromium，"
+                    "然后重启后端再试。"
+                    "若已安装仍报错，请确认未设置错误的 PLAYWRIGHT_BROWSERS_PATH 环境变量。",
                 ) from exc
             raise
 
         self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
 
-        live_room_url = config.liveRoomUrl.strip()
-        self._append_log(f"正在打开直播间: {live_room_url}")
-        self._page.goto(live_room_url, wait_until="domcontentloaded", timeout=90000)
-        self._page.wait_for_timeout(3000)
+        if config.resolve_live_room_url():
+            self._append_log(f"将直接打开直播间: {config.resolve_live_room_url()}")
+        else:
+            self._append_log(f"未配置直播间 URL，将按抖音号「{config.douyinId}」搜索进房")
+
+        # 先打开抖音首页，便于登录与搜索
+        self._page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=90000)
+        self._page.wait_for_timeout(2000)
         self._dismiss_overlays(self._page)
 
         if config.waitLoginSeconds > 0:
@@ -814,8 +819,23 @@ class DouyinLiveAutomation:
             if self._stop_event.wait(config.waitLoginSeconds):
                 raise RuntimeError("任务已取消")
 
+        final_url = enter_live_room(
+            self._page,
+            config,
+            self._append_log,
+            self._stop_event,
+        )
+        self._dismiss_overlays(self._page)
+
+        # 搜索进房后回填直播间号，便于截图目录与下次直达
+        rid = extract_live_room_id(final_url)
+        if rid:
+            config.webRid = rid
+            config.liveRoomUrl = f"https://live.douyin.com/{rid}"
+            self._append_log(f"已解析直播间号: {rid}")
+
         self._wait_for_comment_area(self._page)
-        self._append_log("已进入直播间，评论区就绪")
+        self._append_log(f"已进入直播间，评论区就绪: {final_url}")
         return self._page
 
     def _wait_until_send_or_stop(self) -> bool:
@@ -1169,105 +1189,122 @@ class DouyinLiveAutomation:
                     pass
         return False
 
-    def _append_unicode_emoji_repeat(
-        self,
-        page: Page,
-        emoji_index: int,
-        repeat_count: int,
-    ) -> None:
+    def _append_text_to_input(self, page: Page, text: str, *, clear_first: bool) -> None:
         """
-        备用方案：在输入框填入同一 Unicode 表情多次。
+        向评论输入框写入文字。
+
+        @param page: 页面对象
+        @param text: 文字内容
+        @param clear_first: 是否先清空输入框
+        """
+        input_box = self._focus_comment_input(page)
+        if clear_first:
+            self._type_into_comment_input(page, input_box, text)
+        else:
+            input_box.click(timeout=3000)
+            page.wait_for_timeout(120)
+            page.keyboard.press("End")
+            page.keyboard.insert_text(text)
+        page.wait_for_timeout(150)
+
+    def _append_unicode_emoji(self, page: Page, emoji_index: int) -> None:
+        """
+        备用方案：追加一个 Unicode 表情。
 
         @param page: 页面对象
         @param emoji_index: 表情序号（从 1 开始）
-        @param repeat_count: 重复次数
         """
         emoji_char = FALLBACK_UNICODE_EMOJIS[(emoji_index - 1) % len(FALLBACK_UNICODE_EMOJIS)]
-        chars = emoji_char * repeat_count
         input_box = self._focus_comment_input(page)
-        self._type_into_comment_input(page, input_box, chars)
-        page.wait_for_timeout(200)
-        self._append_log(f"已使用备用 Unicode 表情: {chars}")
+        input_box.click(timeout=3000)
+        page.wait_for_timeout(120)
+        page.keyboard.press("End")
+        page.keyboard.insert_text(emoji_char)
+        page.wait_for_timeout(150)
+        self._append_log(f"已使用备用 Unicode 表情: {emoji_char}")
 
-    def _send_emojis_batch(
-        self,
-        page: Page,
-        emojis_per_send: int,
-        emoji_index: int,
-    ) -> tuple[int, int]:
+    def _insert_single_emoji(self, page: Page, emoji_index: int) -> bool:
         """
-        单次评论只发一种表情，连续点击同一表情若干次后发送。
+        向输入框插入单个表情。
 
         @param page: 页面对象
-        @param emojis_per_send: 单次评论中该表情的数量
-        @param emoji_index: 任务指定表情序号（从 1 开始）
-        @returns: (表情序号, 实际发送数量)
+        @param emoji_index: 表情序号（从 1 开始）
+        @returns: 是否插入成功
         """
         emoji_index = max(1, emoji_index)
-        clicked_count = 0
-        panel_opened = False
-
         for attempt in range(3):
-            self._prepare_comment_area(page)
-            self._focus_comment_input(page)
-
-            panel_opened = self._open_emoji_panel(page)
-            total = self._count_visible_emoji_items(page)
-            clicked_count = 0
-
-            if panel_opened:
-                self._append_log(
-                    f"表情面板共 {total} 个，准备点击第 {emoji_index} 个",
-                )
-                for click_round in range(emojis_per_send):
-                    if self._click_emoji_at_index(page, emoji_index):
-                        clicked_count += 1
-                        page.wait_for_timeout(250)
-                        continue
-                    if click_round < emojis_per_send - 1:
-                        self._open_emoji_panel(page)
-                        page.wait_for_timeout(300)
-                        if self._click_emoji_at_index(page, emoji_index):
-                            clicked_count += 1
-                            page.wait_for_timeout(250)
-                        else:
-                            break
-                    else:
-                        break
-
-            if clicked_count > 0:
-                break
-
-            self._append_log(f"表情面板打开失败，重试 ({attempt + 1}/3)")
+            if self._open_emoji_panel(page) and self._click_emoji_at_index(page, emoji_index):
+                page.wait_for_timeout(200)
+                return True
+            self._append_log(f"插入表情 {emoji_index} 失败，重试 ({attempt + 1}/3)")
             try:
                 page.keyboard.press("Escape")
-                page.wait_for_timeout(300)
+                page.wait_for_timeout(200)
             except Exception:
                 pass
+        self._append_unicode_emoji(page, emoji_index)
+        return True
 
-        if clicked_count == 0:
-            self._append_log("未找到表情按钮，尝试备用 Unicode 表情发送")
-            self._prepare_comment_area(page)
-            self._append_unicode_emoji_repeat(page, emoji_index, emojis_per_send)
-            if not self._click_send_button(page):
-                page.keyboard.press("Enter")
-            page.wait_for_timeout(500)
-            return emoji_index, emojis_per_send
+    def _send_comment(
+        self,
+        page: Page,
+        parts: list[CommentPart],
+    ) -> tuple[str, int, int]:
+        """
+        按片段顺序发送一条评论（文字与表情可自由穿插）。
+
+        @param page: 页面对象
+        @param parts: 评论片段列表
+        @returns: (文字预览, 首个表情序号, 表情总数)
+        """
+        if not parts:
+            raise RuntimeError("评论内容为空：请输入文字或插入表情")
+
+        self._prepare_comment_area(page)
+        self._focus_comment_input(page)
+
+        text_chunks: list[str] = []
+        emoji_indices: list[int] = []
+        is_first = True
+
+        for part in parts:
+            if part.type == "text":
+                text = part.text.strip()
+                if not text:
+                    continue
+                self._append_text_to_input(page, text, clear_first=is_first)
+                text_chunks.append(text)
+                is_first = False
+                continue
+
+            if part.type == "emoji":
+                if is_first:
+                    # 首段为表情时先清空输入框，避免残留
+                    input_box = self._focus_comment_input(page)
+                    self._type_into_comment_input(page, input_box, "")
+                    is_first = False
+                self._insert_single_emoji(page, part.index)
+                emoji_indices.append(part.index)
 
         page.wait_for_timeout(300)
         if not self._click_send_button(page):
             page.keyboard.press("Enter")
         page.wait_for_timeout(500)
-        return emoji_index, clicked_count
+
+        preview = "".join(text_chunks)
+        first_emoji = emoji_indices[0] if emoji_indices else 0
+        return preview, first_emoji, len(emoji_indices)
 
     def _run_loop(self, config: AppConfig) -> None:
         """
-        评论循环主逻辑：整次任务固定发送指定序号表情。
+        评论循环主逻辑：支持文字、表情，或二者组合发送。
 
         @param config: 运行配置
         """
         screenshot_dir = config.resolve_screenshot_dir()
         end_at = config.resolve_end_time()
+        comment_parts = config.resolved_comment_parts()
+        comment_preview = config.comment_preview()
 
         if config.endTimeEnabled and end_at is not None:
             self._append_log(f"任务将于 {end_at.strftime('%Y-%m-%d %H:%M:%S')} 自动停止")
@@ -1276,7 +1313,7 @@ class DouyinLiveAutomation:
             try:
                 self._excel_logger = CommentExcelLogger(
                     config.resolve_excel_report_dir(),
-                    config.liveRoomUrl.strip(),
+                    config.resolve_live_room_url(),
                 )
                 self.runtime.excel_report_path = str(self._excel_logger.file_path)
                 self._append_log(f"Excel 统计文件: {self._excel_logger.file_path.name}")
@@ -1303,25 +1340,24 @@ class DouyinLiveAutomation:
                     )
                     break
 
+                sent_text = comment_preview
                 emoji_index = 0
-                emoji_count = config.emojisPerSend
+                emoji_count = 0
                 screenshot_path = ""
                 record_status = "失败"
                 record_remark = ""
 
                 try:
                     chat_count_before = get_chat_message_count(page)
-                    emoji_index, emoji_count = self._send_emojis_batch(
+                    sent_text, emoji_index, emoji_count = self._send_comment(
                         page,
-                        config.emojisPerSend,
-                        config.emojiIndex,
+                        comment_parts,
                     )
                     self.runtime.sent_count += 1
                     self.runtime.last_error = ""
                     record_status = "成功"
                     self._append_log(
-                        f"已发送评论 ({self.runtime.sent_count}): "
-                        f"第 {emoji_index} 个表情 × {emoji_count}",
+                        f"已发送评论 ({self.runtime.sent_count}): {comment_preview}",
                     )
 
                     if config.screenshotEnabled:
@@ -1353,7 +1389,8 @@ class DouyinLiveAutomation:
                                 if record_status == "成功"
                                 else self.runtime.sent_count + 1
                             ),
-                            emoji_index=emoji_index or config.emojiIndex,
+                            comment_text=comment_preview or sent_text,
+                            emoji_index=emoji_index,
                             emoji_count=emoji_count,
                             screenshot_path=screenshot_path,
                             status=record_status,

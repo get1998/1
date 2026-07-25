@@ -1,18 +1,11 @@
 <script setup lang="ts">
-import { EMOJI_PER_SEND_PRESETS } from '@/composables/useAppConfig'
-import EmojiPicker from '@/components/EmojiPicker.vue'
+import CommentComposer from '@/components/CommentComposer.vue'
 import type { AppConfig } from '@/api/types'
 
-/** 配置表单：单次评论一种表情，可视化选择抖音表情 */
+/** 配置表单：评论内容支持文字与表情自由组合 */
 defineProps<{
   /** 配置表单数据 */
   form: AppConfig
-  /** 发送预览 */
-  emojiSendPreview: string
-  /** 单次表情数说明 */
-  emojiQuantityText: string
-  /** 指定表情说明 */
-  emojiIndexText: string
   /** 是否保存中 */
   saving: boolean
   /** 是否启动中 */
@@ -48,10 +41,26 @@ const emit = defineEmits<{
     </template>
 
     <el-form :model="form" label-width="130px">
-      <el-form-item label="直播间 URL" required>
+      <el-form-item label="抖音号" required>
+        <el-input v-model="form.douyinId" placeholder="主播抖音号，例如 abc123" clearable />
+        <div class="form-desc">
+          未填直播间号时：启动后自动打开抖音，按抖音号搜索并进入正在直播的房间
+        </div>
+      </el-form-item>
+
+      <el-form-item label="直播间号">
+        <el-input v-model="form.webRid" placeholder="可选，如 421527298234" clearable />
+        <div class="form-desc">
+          可选。填了则直接打开 live.douyin.com/直播间号，不再搜索。
+          {{ form.liveRoomUrl ? `当前：${form.liveRoomUrl}` : '' }}
+        </div>
+      </el-form-item>
+
+      <el-form-item label="直播间 URL">
         <el-input
           v-model="form.liveRoomUrl"
-          placeholder="https://live.douyin.com/123456789"
+          :readonly="!!form.webRid"
+          placeholder="可选；有直播间号时自动生成，也可粘贴完整链接"
           clearable
         />
       </el-form-item>
@@ -66,36 +75,15 @@ const emit = defineEmits<{
         <span class="form-tip">秒（首次打开浏览器后等待手动登录）</span>
       </el-form-item>
 
-      <el-form-item label="选择表情" required>
-        <EmojiPicker
-          v-model="form.emojiIndex"
+      <el-form-item label="评论内容" required>
+        <CommentComposer
+          v-model="form.commentParts"
+          :douyin-id="form.douyinId"
+          :web-rid="form.webRid"
           :live-room-url="form.liveRoomUrl"
           :wait-login-seconds="form.waitLoginSeconds"
           :running="running"
         />
-        <div class="form-desc">{{ emojiIndexText }}</div>
-      </el-form-item>
-
-      <el-form-item label="单次表情数" required>
-        <div class="emoji-count-row">
-          <el-input-number v-model="form.emojisPerSend" :min="1" :max="20" :step="1" />
-          <div class="preset-group">
-            <el-button
-              v-for="count in EMOJI_PER_SEND_PRESETS"
-              :key="`qty-${count}`"
-              :type="form.emojisPerSend === count ? 'primary' : 'default'"
-              plain
-              @click="form.emojisPerSend = count"
-            >
-              {{ count }} 个
-            </el-button>
-          </div>
-        </div>
-        <div class="form-desc">{{ emojiQuantityText }}</div>
-      </el-form-item>
-
-      <el-form-item label="发送预览">
-        <div class="order-preview">{{ emojiSendPreview }}</div>
       </el-form-item>
 
       <el-form-item label="发评后截图">
@@ -103,8 +91,9 @@ const emit = defineEmits<{
         <span class="form-tip">关闭后仅发评论，不保存截图</span>
       </el-form-item>
 
-      <el-form-item v-if="form.screenshotEnabled" label="截图目录" required>
-        <el-input v-model="form.screenshotDir" placeholder="./screenshots" clearable />
+      <el-form-item v-if="form.screenshotEnabled" label="截图目录">
+        <el-input v-model="form.screenshotDir" readonly placeholder="./screenshots/房间号" />
+        <div class="form-desc">按直播间号或抖音号自动生成</div>
       </el-form-item>
 
       <el-form-item v-if="form.screenshotEnabled" label="截图等待">
@@ -117,8 +106,9 @@ const emit = defineEmits<{
         <span class="form-tip">每次发评写入 Excel 记录</span>
       </el-form-item>
 
-      <el-form-item v-if="form.excelReportEnabled" label="报表目录" required>
-        <el-input v-model="form.excelReportDir" placeholder="./reports" clearable />
+      <el-form-item v-if="form.excelReportEnabled" label="报表目录">
+        <el-input v-model="form.excelReportDir" readonly placeholder="./reports/标识" />
+        <div class="form-desc">按直播间号或抖音号自动生成</div>
       </el-form-item>
 
       <el-form-item label="结束时间">
@@ -180,34 +170,6 @@ const emit = defineEmits<{
   color: #6b7280;
   font-size: 13px;
   line-height: 1.5;
-}
-
-.emoji-count-row {
-  display: flex;
-  flex-direction: column;
-}
-
-.preset-group {
-  display: flex;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-
-.preset-group .el-button {
-  margin-right: 8px;
-  margin-bottom: 8px;
-}
-
-.order-preview {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f9fafb;
-  color: #374151;
-  font-size: 14px;
-  line-height: 1.6;
-  word-break: break-all;
 }
 
 .el-button + .el-button {

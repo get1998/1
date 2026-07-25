@@ -1,16 +1,52 @@
 /**
+ * 评论片段：文字或表情，可自由穿插组合
+ */
+export type CommentPart =
+  | {
+      /** 文字片段 */
+      type: 'text'
+      /** 文字内容 */
+      text: string
+    }
+  | {
+      /** 表情片段 */
+      type: 'emoji'
+      /** 表情序号，从 1 开始 */
+      index: number
+    }
+
+/**
  * 应用运行配置
  */
 export interface AppConfig {
-  /** 抖音直播间 URL */
+  /**
+   * 主播抖音号
+   * 未配置直播间号/URL 时，自动打开抖音搜索并进入直播间
+   */
+  douyinId: string
+  /**
+   * 可选。直播间号 web_rid（live.douyin.com/ 后缀），有则直接打开
+   */
+  webRid: string
+  /** 可选。直播间 URL；有值时优先直接打开 */
   liveRoomUrl: string
   /** 评论发送间隔（秒） */
   intervalSeconds: number
   /** 截图存储目录 */
   screenshotDir: string
-  /** 单次评论中同一表情的数量 */
+  /** 评论内容片段（文字与表情自由组合，按顺序发送） */
+  commentParts: CommentPart[]
+  /**
+   * 评论文字（兼容旧配置；由 commentParts 同步）
+   */
+  commentText: string
+  /**
+   * 单次表情数量（兼容旧配置；由 commentParts 同步）
+   */
   emojisPerSend: number
-  /** 任务指定表情序号，整次任务固定发送第 N 个表情 */
+  /**
+   * 表情序号（兼容旧配置；由 commentParts 同步）
+   */
   emojiIndex: number
   /** 是否在发评后截图 */
   screenshotEnabled: boolean
@@ -84,8 +120,12 @@ export interface EmojiCatalogResponse {
  * 抓取表情目录请求
  */
 export interface EmojiCatalogRequest {
+  /** 主播抖音号 */
+  douyinId?: string
+  /** 直播间号 web_rid */
+  webRid?: string
   /** 直播间 URL */
-  liveRoomUrl: string
+  liveRoomUrl?: string
   /** 等待登录秒数 */
   waitLoginSeconds: number
 }

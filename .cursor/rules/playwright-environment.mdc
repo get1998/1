@@ -1,0 +1,56 @@
+---
+description: Playwright 浏览器安装、启动与环境变量约定（本项目必读）
+alwaysApply: true
+---
+
+# Playwright 环境与浏览器路径
+
+本项目后端依赖 Playwright Chromium。出现「浏览器未安装 / Executable doesn't exist」时，**优先排查 Python 环境与 `PLAYWRIGHT_BROWSERS_PATH`**，不要只让用户重复 `playwright install`。
+
+## 必须使用项目 venv
+
+- 后端启动：`.\\.venv\\Scripts\\python.exe -m src.main`
+- 安装浏览器：`.\\.venv\\Scripts\\python.exe -m playwright install chromium`
+- 安装依赖：`pip install -r requirements.txt`（在激活 `.venv` 后）
+
+**禁止**用全局 `python` 安装或运行（本机全局 Python 可能未安装 `playwright` 包，且浏览器路径不一致）。
+
+## Cursor 终端的 PLAYWRIGHT_BROWSERS_PATH 陷阱
+
+Cursor / IDE 终端可能注入：
+
+```text
+PLAYWRIGHT_BROWSERS_PATH=C:\Users\...\Temp\cursor-sandbox-cache\...\playwright
+```
+
+这是**临时沙箱目录**，重启后会清空。浏览器实际安装在：
+
+```text
+%LOCALAPPDATA%\ms-playwright\chromium-*\chrome-win64\chrome.exe
+```
+
+因此用户「明明已 install，重启服务仍报错」是常见现象，不是未安装。
+
+## 项目内已有修复
+
+`src/playwright_env.py` 在 `src/main.py`、`src/cli.py` 启动时导入，会：
+
+1. 检测 `PLAYWRIGHT_BROWSERS_PATH` 是否指向 `cursor-sandbox-cache` 或无效目录
+2. 若无效且 `%LOCALAPPDATA%\ms-playwright` 有 Chromium，则清除该环境变量，回退默认路径
+
+**修改 Playwright 相关代码时**：保持上述模块在 Playwright 启动前被导入；不要在别处重新设置指向临时目录的 `PLAYWRIGHT_BROWSERS_PATH`。
+
+## AI 处理此类问题时的步骤
+
+1. 确认后端是否用 `.venv` 的 Python 启动
+2. 检查 `PLAYWRIGHT_BROWSERS_PATH` 是否指向 `cursor-sandbox-cache`
+3. 用 venv 验证：`.\.venv\Scripts\python.exe -m playwright install --dry-run chromium`
+4. 若仍失败，再建议用户重装浏览器（仍用 venv 命令）
+5. 修改后提醒用户**重启后端**以加载 `playwright_env` 修复
+
+## 错误提示约定
+
+Playwright 启动失败且异常含 `Executable doesn't exist` 时，错误信息应引导：
+
+- 使用 `.venv` 下的 `python -m playwright install chromium`
+- 检查是否设置了错误的 `PLAYWRIGHT_BROWSERS_PATH`

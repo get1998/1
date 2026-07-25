@@ -1,8 +1,15 @@
 {
-  "liveRoomUrl": "https://live.douyin.com/123456789",
+  "douyinId": "example_douyin_id",
+  "webRid": "",
+  "liveRoomUrl": "",
   "intervalSeconds": 30,
   "screenshotDir": "./screenshots",
-  "emojisPerSend": 3,
+  "commentParts": [
+    { "type": "text", "text": "主播加油" },
+    { "type": "emoji", "index": 1 }
+  ],
+  "commentText": "主播加油",
+  "emojisPerSend": 1,
   "emojiIndex": 1,
   "screenshotEnabled": true,
   "screenshotWaitSeconds": 3,

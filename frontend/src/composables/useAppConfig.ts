@@ -1,246 +1,218 @@
-import { computed, onMounted, reactive, ref } from 'vue'
-
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-
 import { fetchConfig, saveConfigApi } from '@/api'
-
-import type { AppConfig } from '@/api/types'
-
-
-
-/** 可选的单次表情数量 */
-
-export const EMOJI_PER_SEND_PRESETS = [1, 2, 3, 4, 5, 6, 8, 10] as const
-
-
-
-/** 可选的任务指定表情序号 */
-
-export const EMOJI_INDEX_PRESETS = [1, 2, 3, 4, 5, 6, 8, 10] as const
-
-
+import type { AppConfig, CommentPart } from '@/api/types'
+import {
+  formatCommentPartsPreview,
+  hasCommentContent,
+  migrateLegacyCommentParts,
+  normalizeCommentParts,
+} from '@/utils/commentParts'
+import {
+  buildExcelReportDir,
+  buildLiveRoomUrl,
+  buildScreenshotDir,
+  extractLiveRoomId,
+  normalizeAccountId,
+} from '@/utils/liveRoom'
 
 /**
-
  * 默认配置
-
  */
-
 const DEFAULT_CONFIG: AppConfig = {
-
+  douyinId: '',
+  webRid: '',
   liveRoomUrl: '',
-
   intervalSeconds: 30,
-
   screenshotDir: './screenshots',
-
-  emojisPerSend: 3,
-
+  commentParts: [],
+  commentText: '',
+  emojisPerSend: 0,
   emojiIndex: 1,
-
   screenshotEnabled: true,
-
   screenshotWaitSeconds: 3,
-
   excelReportEnabled: true,
-
   excelReportDir: './reports',
-
   endTimeEnabled: false,
-
   endTime: '',
-
   waitLoginSeconds: 30,
-
 }
 
+/**
+ * 同步直播间直达字段与存储目录
+ * @param form - 配置表单
+ */
+function syncLiveRoomFields(form: AppConfig): void {
+  form.douyinId = normalizeAccountId(form.douyinId)
+  const webRid = normalizeAccountId(form.webRid)
+  const urlRid = extractLiveRoomId(form.liveRoomUrl)
 
+  if (webRid) {
+    form.webRid = webRid
+    form.liveRoomUrl = buildLiveRoomUrl(webRid)
+  } else if (urlRid) {
+    form.webRid = urlRid
+    form.liveRoomUrl = buildLiveRoomUrl(urlRid)
+  } else {
+    form.webRid = ''
+    // 仅抖音号模式：不伪造直播间 URL
+    form.liveRoomUrl = ''
+  }
+
+  const storageKey = form.webRid || form.douyinId || extractLiveRoomId(form.liveRoomUrl)
+  form.screenshotDir = buildScreenshotDir(storageKey)
+  form.excelReportDir = buildExcelReportDir(storageKey)
+}
 
 /**
-
- * 配置表单与保存逻辑
-
+ * 由 commentParts 同步兼容字段
+ * @param form - 配置表单
  */
+function syncLegacyFieldsFromParts(form: AppConfig): void {
+  const parts = normalizeCommentParts(form.commentParts)
+  form.commentText = parts
+    .filter((part): part is Extract<CommentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('')
+  const emojiIndices = parts
+    .filter((part): part is Extract<CommentPart, { type: 'emoji' }> => part.type === 'emoji')
+    .map((part) => part.index)
+  form.emojisPerSend = emojiIndices.length
+  form.emojiIndex = emojiIndices[0] ?? 1
+}
 
+/**
+ * 配置表单与保存逻辑
+ */
 export function useAppConfig() {
-
-  const form = reactive<AppConfig>({ ...DEFAULT_CONFIG })
-
+  const form = reactive<AppConfig>({ ...DEFAULT_CONFIG, commentParts: [] })
   const loading = ref(false)
-
   const saving = ref(false)
 
-
-
   /** 发送预览 */
-
   const emojiSendPreview = computed((): string => {
-
-    return `整次任务固定发送：第 ${form.emojiIndex} 个表情 × ${form.emojisPerSend} 个/次`
-
+    return formatCommentPartsPreview(form.commentParts)
   })
-
-
-
-  /** 单次表情数说明 */
-
-  const emojiQuantityText = computed((): string => {
-
-    return `单次评论只发 1 种表情，每种连续发 ${form.emojisPerSend} 个后发送`
-
-  })
-
-
-
-  /** 指定表情说明 */
-
-  const emojiIndexText = computed((): string => {
-
-    return `点击表情图选择；任务运行期间始终发送第 ${form.emojiIndex} 个表情，每种连续发 ${form.emojisPerSend} 个`
-
-  })
-
-
 
   /**
-
    * 构建提交配置
-
+   * @param options - 构建选项
+   * @param options.requireContent - 是否要求评论内容非空（启动任务时为 true）
    * @returns 完整配置对象
-
    */
-
-  function buildPayload(): AppConfig {
-
-    return { ...form }
-
+  function buildPayload(options?: { requireContent?: boolean }): AppConfig {
+    syncLiveRoomFields(form)
+    syncLegacyFieldsFromParts(form)
+    if (options?.requireContent) {
+      if (!form.douyinId && !form.webRid && !form.liveRoomUrl) {
+        throw new Error('请填写抖音号，或填写直播间号/URL')
+      }
+      if (!hasCommentContent(form.commentParts)) {
+        throw new Error('请在评论输入框中输入文字或插入表情')
+      }
+    }
+    return {
+      ...form,
+      commentParts: normalizeCommentParts(form.commentParts),
+    }
   }
 
-
-
   /**
-
    * 加载配置
-
    */
-
   async function loadConfig(): Promise<void> {
-
     loading.value = true
-
     try {
-
       const data = await fetchConfig()
-
+      const parts =
+        data.commentParts && data.commentParts.length > 0
+          ? normalizeCommentParts(data.commentParts)
+          : migrateLegacyCommentParts(
+              data.commentText ?? '',
+              data.emojisPerSend ?? 0,
+              data.emojiIndex ?? 1,
+            )
       Object.assign(form, {
-
+        douyinId: data.douyinId ?? '',
+        webRid: data.webRid ?? '',
         liveRoomUrl: data.liveRoomUrl ?? '',
-
         intervalSeconds: data.intervalSeconds ?? 30,
-
         screenshotDir: data.screenshotDir ?? './screenshots',
-
-        emojisPerSend: data.emojisPerSend ?? 3,
-
+        commentParts: parts,
+        commentText: data.commentText ?? '',
+        emojisPerSend: data.emojisPerSend ?? 0,
         emojiIndex: data.emojiIndex ?? 1,
-
         screenshotEnabled: data.screenshotEnabled ?? true,
-
         screenshotWaitSeconds: data.screenshotWaitSeconds ?? 3,
-
         excelReportEnabled: data.excelReportEnabled ?? true,
-
         excelReportDir: data.excelReportDir ?? './reports',
-
         endTimeEnabled: data.endTimeEnabled ?? false,
-
         endTime: data.endTime ?? '',
-
         waitLoginSeconds: data.waitLoginSeconds ?? 30,
-
       })
-
+      syncLiveRoomFields(form)
+      syncLegacyFieldsFromParts(form)
     } catch (error) {
-
       ElMessage.error(error instanceof Error ? error.message : '加载配置失败')
-
     } finally {
-
       loading.value = false
-
     }
-
   }
-
-
 
   /**
-
    * 保存配置
-
    * @returns 是否保存成功
-
    */
-
   async function saveConfig(): Promise<boolean> {
-
     saving.value = true
-
     try {
-
       const saved = await saveConfigApi(buildPayload())
-
       Object.assign(form, saved)
-
+      if (!form.commentParts?.length) {
+        form.commentParts = migrateLegacyCommentParts(
+          form.commentText,
+          form.emojisPerSend,
+          form.emojiIndex,
+        )
+      }
+      syncLiveRoomFields(form)
+      syncLegacyFieldsFromParts(form)
       ElMessage.success('配置已保存')
-
       return true
-
     } catch (error) {
-
       ElMessage.error(error instanceof Error ? error.message : '保存配置失败')
-
       return false
-
     } finally {
-
       saving.value = false
-
     }
-
   }
 
+  watch(
+    () => [form.douyinId, form.webRid, form.liveRoomUrl] as const,
+    () => {
+      syncLiveRoomFields(form)
+    },
+  )
 
+  watch(
+    () => form.commentParts,
+    () => {
+      syncLegacyFieldsFromParts(form)
+    },
+    { deep: true },
+  )
 
   onMounted(() => {
-
     void loadConfig()
-
   })
 
-
-
   return {
-
     form,
-
     emojiSendPreview,
-
-    emojiQuantityText,
-
-    emojiIndexText,
-
     loading,
-
     saving,
-
     buildPayload,
-
     loadConfig,
-
     saveConfig,
-
   }
-
 }
-

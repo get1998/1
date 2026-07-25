@@ -1,33 +1,61 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchEmojiCatalogApi, getEmojiCatalogApi } from '@/api'
 import type { EmojiCatalogItem } from '@/api/types'
 
-/** 表情选择器：展示抖音直播间表情面板，点击选择 */
-const props = defineProps<{
-  /** 当前选中的表情序号 */
-  modelValue: number
-  /** 直播间 URL */
-  liveRoomUrl: string
-  /** 等待登录秒数 */
-  waitLoginSeconds: number
-  /** 任务是否运行中 */
-  running: boolean
-}>()
+/** 表情选择器：展示抖音直播间表情；支持单选或插入模式 */
+const props = withDefaults(
+  defineProps<{
+    /** 当前选中的表情序号（单选模式） */
+    modelValue?: number
+    /** 主播抖音号 */
+    douyinId?: string
+    /** 直播间号 web_rid */
+    webRid?: string
+    /** 直播间 URL */
+    liveRoomUrl?: string
+    /** 等待登录秒数 */
+    waitLoginSeconds: number
+    /** 任务是否运行中 */
+    running: boolean
+    /** 插入模式：点击表情触发 pick，不强制单选 */
+    insertMode?: boolean
+  }>(),
+  {
+    modelValue: 0,
+    douyinId: '',
+    webRid: '',
+    liveRoomUrl: '',
+    insertMode: false,
+  },
+)
 
 const emit = defineEmits<{
   /** 更新选中表情序号 */
   'update:modelValue': [value: number]
+  /** 点击表情（插入模式） */
+  pick: [index: number]
+  /** 表情目录加载完成 */
+  catalogLoaded: [items: EmojiCatalogItem[]]
 }>()
 
 const loading = ref(false)
 const refreshing = ref(false)
 const items = ref<EmojiCatalogItem[]>([])
+const lastPicked = ref(0)
+
+/** 当前高亮序号 */
+const highlightIndex = computed((): number => {
+  if (props.insertMode) {
+    return lastPicked.value || props.modelValue
+  }
+  return props.modelValue
+})
 
 /** 当前选中项 */
 const selectedItem = computed((): EmojiCatalogItem | undefined => {
-  return items.value.find((item) => item.index === props.modelValue)
+  return items.value.find((item) => item.index === highlightIndex.value)
 })
 
 /** 是否已有缓存的表情目录 */
@@ -39,8 +67,11 @@ const hasCachedCatalog = computed((): boolean => items.value.length > 0)
  */
 function applyCatalog(catalogItems: EmojiCatalogItem[]): void {
   items.value = catalogItems
+  emit('catalogLoaded', catalogItems)
   if (
+    !props.insertMode &&
     catalogItems.length > 0 &&
+    props.modelValue > 0 &&
     !catalogItems.some((item) => item.index === props.modelValue)
   ) {
     emit('update:modelValue', catalogItems[0]?.index ?? 1)
@@ -66,9 +97,8 @@ async function loadCachedCatalog(): Promise<void> {
  * 从直播间重新抓取表情目录
  */
 async function refreshEmojis(): Promise<void> {
-  const url = props.liveRoomUrl.trim()
-  if (!url) {
-    ElMessage.warning('请先填写直播间 URL')
+  if (!props.douyinId && !props.webRid && !props.liveRoomUrl?.trim()) {
+    ElMessage.warning('请先填写抖音号，或填写直播间号/URL')
     return
   }
   if (props.running) {
@@ -79,7 +109,9 @@ async function refreshEmojis(): Promise<void> {
   refreshing.value = true
   try {
     const data = await fetchEmojiCatalogApi({
-      liveRoomUrl: url,
+      douyinId: props.douyinId,
+      webRid: props.webRid,
+      liveRoomUrl: props.liveRoomUrl,
       waitLoginSeconds: props.waitLoginSeconds,
     })
     applyCatalog(data.items)
@@ -96,12 +128,25 @@ async function refreshEmojis(): Promise<void> {
 }
 
 /**
- * 选择表情
+ * 选择 / 插入表情
  * @param index - 表情序号
  */
 function selectEmoji(index: number): void {
-  emit('update:modelValue', index)
+  lastPicked.value = index
+  if (!props.insertMode) {
+    emit('update:modelValue', index)
+  }
+  emit('pick', index)
 }
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (value > 0) {
+      lastPicked.value = value
+    }
+  },
+)
 
 onMounted(() => {
   void loadCachedCatalog()
@@ -120,7 +165,10 @@ onMounted(() => {
       >
         {{ hasCachedCatalog ? '重新抓取表情' : '从直播间加载表情' }}
       </el-button>
-      <span v-if="selectedItem" class="emoji-picker__hint">
+      <span v-if="insertMode" class="emoji-picker__hint">
+        点击表情插入到上方输入框光标处
+      </span>
+      <span v-else-if="selectedItem" class="emoji-picker__hint">
         已选第 {{ modelValue }} 个表情（共 {{ items.length }} 个，本地已缓存）
       </span>
       <span v-else-if="items.length > 0" class="emoji-picker__hint">
@@ -138,7 +186,7 @@ onMounted(() => {
         :key="item.index"
         type="button"
         class="emoji-picker__item"
-        :class="{ 'is-selected': item.index === modelValue }"
+        :class="{ 'is-selected': item.index === highlightIndex }"
         @click="selectEmoji(item.index)"
       >
         <img :src="item.imageUrl" :alt="`表情${item.index}`" class="emoji-picker__img" />
@@ -147,7 +195,7 @@ onMounted(() => {
     </div>
 
     <div v-else-if="!loading" class="emoji-picker__empty">
-      填写直播间 URL 后点击「从直播间加载表情」，只需抓取一次；之后打开页面会自动读取本地缓存。
+      填写抖音号（或直播间号）后点击「从直播间加载表情」，只需抓取一次；之后打开页面会自动读取本地缓存。
     </div>
   </div>
 </template>

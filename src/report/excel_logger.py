@@ -12,6 +12,7 @@ HEADER_COLUMNS: list[str] = [
     "序号",
     "发送时间",
     "直播间URL",
+    "评论文字",
     "表情序号",
     "单次数量",
     "截图路径",
@@ -45,6 +46,7 @@ class CommentExcelLogger:
     def append_record(
         self,
         sequence: int,
+        comment_text: str,
         emoji_index: int,
         emoji_count: int,
         screenshot_path: str,
@@ -55,6 +57,7 @@ class CommentExcelLogger:
         追加一条评论发送记录。
 
         @param sequence: 发送序号
+        @param comment_text: 评论文字
         @param emoji_index: 表情序号
         @param emoji_count: 单次表情数量
         @param screenshot_path: 截图路径
@@ -66,6 +69,7 @@ class CommentExcelLogger:
                 sequence,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 self.live_room_url,
+                comment_text,
                 emoji_index,
                 emoji_count,
                 screenshot_path,
@@ -87,6 +91,7 @@ class CommentExcelLogger:
             [
                 "汇总",
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "",
                 "",
                 "",
                 total_sent,

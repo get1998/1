@@ -5,24 +5,20 @@ import TaskStatusPanel from '@/components/TaskStatusPanel.vue'
 import { useAppConfig } from '@/composables/useAppConfig'
 import { useTaskControl } from '@/composables/useTaskControl'
 
-const { form, emojiSendPreview, emojiQuantityText, emojiIndexText, saving, buildPayload, saveConfig } =
-  useAppConfig()
+const { form, saving, buildPayload, saveConfig } = useAppConfig()
 const { status, starting, beginningSend, stopping, startTask, beginSend, stopTask } =
-  useTaskControl(buildPayload)
+  useTaskControl(() => buildPayload({ requireContent: true }))
 </script>
 
 <template>
   <div class="config-page">
     <header class="page-header">
       <h1>抖音直播间自动评论</h1>
-      <p>先「启动任务」进入直播间，就绪后再点「开始发送」才会发评。</p>
+      <p>填抖音号可自动搜索进房；也可填直播间号直达。先「启动任务」，再「开始发送」。</p>
     </header>
 
     <ConfigForm
       :form="form"
-      :emoji-send-preview="emojiSendPreview"
-      :emoji-quantity-text="emojiQuantityText"
-      :emoji-index-text="emojiIndexText"
       :saving="saving"
       :starting="starting"
       :beginning-send="beginningSend"
